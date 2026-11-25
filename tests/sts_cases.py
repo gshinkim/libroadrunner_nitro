@@ -2,14 +2,16 @@
 benchmarks/sbml_test_suite.py. Adapted from Tellurium Nitro's benchmarks/sts/run_core.py.
 
 A case passes when every point of its time course satisfies |got - expected| <= absolute + relative * |expected|,
-with the case's own tolerances from its -settings.txt, as the suite's README defines. Flux-balance cases are not
-supported (they are linear programs, not simulations) and are reported as skipped.
+with the case's own tolerances from its -settings.txt, as the suite's README defines. Skipped: flux-balance cases
+(linear programs, not simulations; not supported) and fast-reaction cases (the fast attribute was removed from SBML
+in Level 3 Version 2).
 """
 import os
 
 import numpy as np
 
 LEVELS = ['l3v2', 'l3v1', 'l2v5', 'l2v4', 'l2v3', 'l2v2', 'l2v1', 'l1v2']  # newest SBML level first
+FAST = {'FastReaction', 'FastReactions', 'MultipleFastReactions'}  # deprecated SBML feature: not scored
 RTOL, ATOL = 1e-8, 1e-10  # integrator tolerances; the pass tolerances come from each case's settings
 HERE = os.path.dirname(os.path.abspath(__file__))
 SEMANTIC = os.environ.get('SBML_SEMANTIC_DIR', os.path.join(HERE, 'models', 'sbml-test-suite', 'cases', 'semantic'))
@@ -50,6 +52,8 @@ def run_case(RoadRunner, cid, root=SEMANTIC):
     types = rec.get('testType', [])
     if 'FluxBalanceSteadyState' in types:
         return dict(rec, status='skip', reason='flux balance: not supported')
+    if set(rec.get('componentTags', []) + rec.get('testTags', [])) & FAST:
+        return dict(rec, status='skip', reason='fast reactions: removed from SBML (Level 3 Version 2)')
     if 'TimeCourse' not in types:
         return dict(rec, status='skip', reason='not a time course: %s' % types)
     lv = next((l for l in LEVELS if os.path.exists(os.path.join(d, '%s-sbml-%s.xml' % (cid, l)))), None)

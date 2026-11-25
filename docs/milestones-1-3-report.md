@@ -13,9 +13,10 @@ libroadrunner_nitro". Milestones 4 (switch Tellurium Nitro) and 5 (release) are 
 - **libroadrunner's own Python test suite (2.11.0) runs unchanged on roadrunner_nitro: 425 pass, 0 fail.**
   7 known differences are tracked as expected failures, each with its reason. Real libroadrunner passes the
   same suite.
-- **SBML Test Suite, 1789 semantic time courses, judged against the suite's expected results:
-  roadrunner_nitro passes all 1789; libroadrunner 2.11 passes 1576.** roadrunner_nitro passes every case
-  libroadrunner passes, plus 213 more. Flux-balance cases (34) are skipped: not supported.
+- **SBML Test Suite, 1754 semantic time courses, judged against the suite's expected results:
+  roadrunner_nitro passes all 1754; libroadrunner 2.11 passes 1576.** roadrunner_nitro passes every case
+  libroadrunner passes, plus 178 more. Not scored: flux-balance cases (34, not supported) and fast-reaction
+  cases (35; the `fast` attribute was removed from SBML in Level 3 Version 2).
 - The test suite found **8 bugs in the engine or the Python layer**, now fixed. One of them made every
   process draw the same "random" numbers whatever seed was set.
 - Two decisions are needed (see "Open decisions"). One earlier decision is implemented: elasticities ignore
@@ -35,8 +36,8 @@ Commits (local, `main`, not pushed):
 | --- | --- | --- | --- | --- |
 | libroadrunner 2.11 Python tests (`tests/libroadrunner`) | roadrunner_nitro | 425 | 0 | 7 xfail (known differences), 45 skipped |
 | same | libroadrunner 2.11 | 415 | 0 | 41 skipped |
-| SBML Test Suite, semantic time courses | roadrunner_nitro | 1789 | 0 | 34 flux-balance cases skipped |
-| same | libroadrunner 2.11 | 1576 | 213 | 5 wrong results, 208 refused (below) |
+| SBML Test Suite, semantic time courses | roadrunner_nitro | 1754 | 0 | 34 flux-balance and 35 fast-reaction cases skipped |
+| same | libroadrunner 2.11 | 1576 | 178 | 5 wrong results, 173 refused (below) |
 | SBML conversion round trips (`tests/test_sbml_conversion.py`) | roadrunner_nitro | 1830 | 0 | every level/version |
 | API parity (`tests/test_api_parity.py`) | roadrunner_nitro | 3 | 0 | module, RoadRunner, Config |
 | Other Python tests (`tests/`) | roadrunner_nitro | all but 7 | 7 | the 7 failed before milestone 1 (below) |
@@ -46,14 +47,16 @@ Commits (local, `main`, not pushed):
 The two engines differ on libroadrunner's suite only in what is skipped: tests excluded for roadrunner_nitro
 (SWIG internals, tests where roadrunner_nitro is more accurate) and the 7 known differences.
 
-Why libroadrunner fails 213 SBML Test Suite cases:
+Why libroadrunner fails 178 SBML Test Suite cases:
 
 | Reason | Cases |
 | --- | --- |
-| Refuses algebraic rules ("Unable to support algebraic rules") | 124 |
+| Refuses algebraic rules ("Unable to support algebraic rules") | 123 |
 | Refuses delay differential equations | 50 |
-| Refuses fast reactions | 34 |
 | Wrong numbers | 5 |
+
+Fast-reaction cases are not scored: SBML removed `fast` in Level 3 Version 2. libroadrunner refuses all 35;
+roadrunner_nitro passes them.
 
 ## What was built
 
@@ -164,7 +167,7 @@ original author only tested on macOS.
    computes), or use gamma(x+1)?
 2. **The libroadrunner reference for correctness:** the spec's criterion "within 1e-6 of libroadrunner"
    should become "judged against the test suites' expected results; roadrunner_nitro must pass everything
-   libroadrunner passes". libroadrunner is wrong or refuses in 213 SBML Test Suite cases.
+   libroadrunner passes". libroadrunner is wrong or refuses in 178 SBML Test Suite cases.
 
 ## Deviations from the spec
 
