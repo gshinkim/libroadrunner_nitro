@@ -18,7 +18,7 @@ SMALL = BIG + (-262145, -524289, -262659, 787072, 8192, 16384, 6144, 262184)
 
 
 class Core:
-    def __init__(self, sbml): self.r = rn.RoadRunner(sbml)
+    def __init__(self, sbml): self.r = rn.core.RoadRunner(sbml)
     def cma(self, on): self.r.conservedMoietyAnalysis = on
     def __getattr__(self, n): return getattr(self.r, n)
     def sids(self): return self.r.getStoichiometryIds()
@@ -82,7 +82,7 @@ def test_extra_against_libroadrunner(name, sbml):
 
 @pytest.mark.parametrize('name,sbml', MODELS, ids=IDS)
 def test_sbml_level_version_round_trip(name, sbml):
-    a = rn.RoadRunner(sbml)
+    a = rn.core.RoadRunner(sbml)
     a.simulate(0, 1, 3)
     a.setValue(a.getGlobalParameterIds()[0], 0.37) if a.getGlobalParameterIds() else None
     for cur in (False, True):
@@ -95,7 +95,7 @@ def test_sbml_level_version_round_trip(name, sbml):
                 continue
             root = ET.fromstring(text)
             assert (int(root.get('level')), int(root.get('version'))) == lv
-            b, c = rn.RoadRunner(text), rn.RoadRunner(method())
+            b, c = rn.core.RoadRunner(text), rn.core.RoadRunner(method())
             for f in ('getFloatingSpeciesIds', 'getBoundarySpeciesIds', 'getGlobalParameterIds', 'getReactionIds', 'getCompartmentIds'):
                 assert getattr(b, f)() == getattr(c, f)(), f
             cmp(c.getGlobalParameterValues(), b.getGlobalParameterValues(), 1e-12, 1e-15, False)
@@ -105,7 +105,7 @@ def test_sbml_level_version_round_trip(name, sbml):
 
 
 def test_internal_one_step_and_more():
-    r = rn.RoadRunner(rn.antimony_to_sbml('J0: S1 -> S2; k1*S1; S1 = 10; k1 = 0.3'))
+    r = rn.core.RoadRunner(rn.antimony_to_sbml('J0: S1 -> S2; k1*S1; S1 = 10; k1 = 0.3'))
     t = r.internalOneStep(0, 1.0)
     assert 0 < t <= 1 and r.getCurrentTime() == t
     np.testing.assert_allclose(r.getValue('S1'), 10 * np.exp(-0.3 * t), rtol=1e-6)
@@ -115,21 +115,21 @@ def test_internal_one_step_and_more():
     first_time = next_time
     r.setIntegrator('rk45')  # libroadrunner: 0.010281535624713385, S1 9.96920291374347
     t = r.internalOneStep(0, 1.0)
-    r2 = rn.RoadRunner(rn.antimony_to_sbml('J0: S1 -> S2; k1*S1; S1 = 10; k1 = 0.3'))
+    r2 = rn.core.RoadRunner(rn.antimony_to_sbml('J0: S1 -> S2; k1*S1; S1 = 10; k1 = 0.3'))
     r2.setIntegrator('rk45')
     np.testing.assert_allclose(r2.internalOneStep(0, 1.0), 0.010281535624713385, rtol=1e-12)
     assert 0 < t < 1
     np.testing.assert_allclose(r.getValue('S1'), 10 * np.exp(-0.3 * (t + first_time)), rtol=1e-6)
     np.testing.assert_allclose(r2.getValue('S1'), 9.96920291374347, rtol=1e-12)
     # frequency response, exactly: H = k0 X / (iw + k1) for S1 of the chain's first step
-    c = rn.RoadRunner(rn.antimony_to_sbml(ANT['chain']))
+    c = rn.core.RoadRunner(rn.antimony_to_sbml(ANT['chain']))
     f = c.getFrequencyResponse(0.1, 2, 5, 'k0', 'S1', False, False)
     w = np.logspace(-1, 1, 5)
     h = 2 / (1j * w + 0.3)
     np.testing.assert_allclose(f, np.c_[w, abs(h), np.degrees(np.angle(h)) % 360], rtol=1e-12)
     with pytest.raises(ValueError):
         c.getFrequencyResponse(0.1, 1, 2, 'k0', 'J1', False, False)  # libroadrunner: zeros
-    e = rn.RoadRunner(rn.antimony_to_sbml(ANT['events']))
+    e = rn.core.RoadRunner(rn.antimony_to_sbml(ANT['events']))
     assert e.getEventRoots() == [-1.0] and e.getEventRoots(3.0) == [1.0]
     assert 0 < e.getRandom() < 1
 
@@ -141,7 +141,7 @@ def test_internal_one_step_fixed_and_stochastic(name):
 
     model = DECAY.replace("S1 = 10", "S1 = 0") if name == "gillespie_inactive" else DECAY
     integrator = name.removesuffix("_inactive")
-    r = rn.RoadRunner(rn.antimony_to_sbml(model))
+    r = rn.core.RoadRunner(rn.antimony_to_sbml(model))
     r.setIntegrator(integrator)
     if integrator == "gillespie":
         r.setSeed(42)
@@ -157,7 +157,7 @@ def test_internal_one_step_fixed_and_stochastic(name):
 def test_delayed_trigger_roots_use_simulation_history():
     from make_limits_reference import DELAY, REFERENCE
 
-    r = rn.RoadRunner(rn.antimony_to_sbml(DELAY))
+    r = rn.core.RoadRunner(rn.antimony_to_sbml(DELAY))
     r.simulate(0, 2, 9)
     with np.load(REFERENCE) as ref:
         assert r.getNumPiecewiseTriggers() == ref["num_piecewise"]
@@ -171,7 +171,7 @@ def test_delayed_trigger_roots_use_simulation_history():
 
 
 def test_facade_matrices_and_selection_types():
-    from tellurium_nitro.roadrunner.extended_roadrunner import RoadRunner, SelectionRecord
+    from roadrunner_nitro import RoadRunner, SelectionRecord
 
     r = RoadRunner(rn.antimony_to_sbml(ANT['chain']))
     with np.load(os.path.join(REF, 'chain.npz')) as ref:
@@ -202,7 +202,7 @@ def test_facade_matrices_and_selection_types():
 
 
 def test_facade_stoichiometry_and_settings():
-    from tellurium_nitro.roadrunner.extended_roadrunner import RoadRunner
+    from roadrunner_nitro import RoadRunner
 
     r = RoadRunner(rn.antimony_to_sbml(ANT['chain']))
     m = r.model
@@ -212,7 +212,7 @@ def test_facade_stoichiometry_and_settings():
         assert ids == ref[prefix + 'sids'].tolist()
         assert [m.getStoichiometryId(i) for i in range(len(ids))] == ids
         assert [m.getStoichiometryIndex(s) for s in [*ids, 'missing']] == ref[prefix + 'stoich_index'].tolist()
-        sp, rx = r.getFloatingSpeciesIds(), r.getReactionIds()
+        sp, rx = r.model.getFloatingSpeciesIds(), r.model.getReactionIds()
         assert [[m.getStoichiometryIndex(s, x) for x in rx] for s in sp] == ref[prefix + 'stoich_pair_index'].tolist()
         np.testing.assert_allclose([m.getInitStoichiometry(i) for i in range(len(ids))], ref[prefix + 'initial_stoich'])
         for getter, key in ((m.getStoichiometry, 'stoich_pair'), (m.getInitStoichiometry, 'initial_stoich_pair')):
@@ -248,7 +248,7 @@ def test_facade_stoichiometry_and_settings():
 
 
 def test_exact_frequency_response_with_dynamic_stoichiometry():
-    from tellurium_nitro.roadrunner.extended_roadrunner import RoadRunner
+    from roadrunner_nitro import RoadRunner
 
     sbml = rn.antimony_to_sbml("J0: -> S; p; J1: S -> ; k*S; S = 6; p = 3; k = 0.5; a := p/2")
     sbml = sbml.replace('<speciesReference species="S" stoichiometry="1" constant="true"/>',
@@ -275,7 +275,7 @@ def test_exact_frequency_response_with_dynamic_stoichiometry():
 
 
 def test_facade_event_and_piecewise_roots():
-    from tellurium_nitro.roadrunner.extended_roadrunner import RoadRunner
+    from roadrunner_nitro import RoadRunner
 
     r = RoadRunner(rn.antimony_to_sbml("""
         compartment C = 3
@@ -284,10 +284,10 @@ def test_facade_event_and_piecewise_roots():
         J: S -> ; k*S
         E: at time >= 2 && S > 2: S = 0
     """))
-    assert r.getNumEvents() == 1
-    assert r.getEventIds() == ['E']
+    assert r.model.getNumEvents() == 1
+    assert r.model.getEventIds() == ['E']
     assert r.model.getEventIndex('E') == 0 and r.model.getEventIndex('missing') == -1
-    assert r.getNumPiecewiseTriggers() == 3
+    assert r.model.getNumPiecewiseTriggers() == 3
     np.testing.assert_array_equal(r.getEventRoots(2), [-1])
     gdot = np.zeros(1)
     assert r.model.getEventRoots(2, np.array([9.0]), gdot) is None
@@ -300,7 +300,7 @@ def test_facade_event_and_piecewise_roots():
 
 @pytest.mark.parametrize('level,version', [(2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (3, 1), (3, 2)])
 def test_facade_sbml_conversion(level, version):
-    from tellurium_nitro.roadrunner.extended_roadrunner import RoadRunner
+    from roadrunner_nitro import RoadRunner
 
     r = RoadRunner(rn.antimony_to_sbml("J: S -> ; k*S; S = 3; k = 0.25"))
     r['S'] = 5
@@ -316,7 +316,7 @@ def test_facade_sbml_conversion(level, version):
 
 
 def test_sbml_conversion_rejects_unsupported_features():
-    from tellurium_nitro.roadrunner.extended_roadrunner import RoadRunner
+    from roadrunner_nitro import RoadRunner
 
     r = RoadRunner(rn.antimony_to_sbml(ANT['rules']))
     assert RoadRunner(r.getSBML(2, 1))['S2'] == r['S2']

@@ -168,7 +168,7 @@ def test_edit(sbml, steps, expected):
         def rates(formula):
             # Keep the original reaction's local parameters and model functions in scope.
             edited = nitro.sbml_edit('set_kinetic_law', sbml, rid, formula)
-            return np.asarray(nitro.RoadRunner(edited).simulate(0, 1, 6, [rid]))
+            return np.asarray(nitro.core.RoadRunner(edited).simulate(0, 1, 6, [rid]))
 
         formula = nitro.sbml_edit(op, sbml, rid)
         assert_close(rates(formula), rates(expected['formula']))
@@ -185,7 +185,7 @@ def test_edit(sbml, steps, expected):
         edited = sbml
         for op, args in steps:
             edited = nitro.sbml_edit(op, edited, *args)
-        r = nitro.RoadRunner(edited)
+        r = nitro.core.RoadRunner(edited)
         for setting, value in INTEGRATOR_TOLERANCES.items():
             r.setIntegratorSetting(setting, value)
         return snapshot(r, r)

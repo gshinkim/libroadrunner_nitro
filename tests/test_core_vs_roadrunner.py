@@ -54,7 +54,7 @@ REFUSE = ('stoichiometry', 'No rate')  # libroadrunner refusals of getValue the 
 class Core:
     """The adapter on roadrunner_nitro (make_reference.py has the libroadrunner one)."""
     def __init__(self, sbml):
-        self.r = rn.RoadRunner(sbml)
+        self.r = rn.core.RoadRunner(sbml)
     def cma(self, on): self.r.conservedMoietyAnalysis = on
     def tol(self, rtol, atol):
         self.r.setIntegratorSetting('relative_tolerance', rtol)
@@ -184,7 +184,7 @@ def sc_values(r, rec, sbml, cma):
         rec('roc', r.getRatesOfChange, rtol=1e-5, atol=1e-8)
     twin = None
     if cma and rec.ref is not None:  # the same state without moiety analysis (where libroadrunner is no reference)
-        twin = rn.RoadRunner(sbml)
+        twin = rn.core.RoadRunner(sbml)
         if ps:
             twin.setValue(ps[0], 0.42)
     if twin and r.getRateRuleIds():  # libroadrunner returns garbage here: the rates are the twin's
@@ -323,7 +323,7 @@ def sc_volume(r, rec, sbml):  # 'rules' model: initial assignment re-evaluated, 
 def fd_check(r, sbml, what):
     """The core's Jacobian ('J', d[S]'/d[S]) or unscaled elasticities ('E', dv/d[S]) against central
     differences of its own rates, at the current state (where libroadrunner gives no reference)."""
-    c = rn.RoadRunner(sbml)
+    c = rn.core.RoadRunner(sbml)
     ids = c.getFloatingSpeciesIds()
     for s, x in zip(r.getFloatingSpeciesIds(), r.fconc()):
         c.setValue('[%s]' % s, x)
@@ -489,7 +489,7 @@ def ss_check(key, ref, got, sbml, settings, solver):
     disagree on success, the side that succeeded must be right: a true steady state, or (approx) a
     point whose |d/dt| sum is within approx_tolerance."""
     def rates(conc):
-        r = rn.RoadRunner(sbml)
+        r = rn.core.RoadRunner(sbml)
         for s, c in zip(r.getFloatingSpeciesIds(), conc):
             r.setValue('[%s]' % s, c)
         return np.abs(r.getRatesOfChange())
@@ -578,7 +578,7 @@ def test_against_libroadrunner(name, sbml):
 
 
 def test_integrator_registry():
-    b = rn.RoadRunner(rn.antimony_to_sbml(ANT['chain']))
+    b = rn.core.RoadRunner(rn.antimony_to_sbml(ANT['chain']))
     for name in ('rk4', 'euler'):  # crate::fixed (values vs libroadrunner: test_fixed_vs_roadrunner.py)
         b.setIntegrator(name)
         assert np.asarray(b.simulate(0, 1, 5)).shape[0] == 5
@@ -603,7 +603,7 @@ def test_integrator_registry():
 
 def test_cvode_step_settings():
     sbml = rn.antimony_to_sbml("S1 -> S2; 0.4*S1; S1 = 10; S2 = 0")
-    b = rn.RoadRunner(sbml)
+    b = rn.core.RoadRunner(sbml)
     b.setIntegratorSetting('variable_step_size', True)
     b.setIntegratorSetting('initial_time_step', 1e-4)
     b.setIntegratorSetting('minimum_time_step', 1e-4)
@@ -614,7 +614,7 @@ def test_cvode_step_settings():
     assert dt[0] == pytest.approx(1e-4)
     assert np.all(dt[:-1] >= 1e-4 - 1e-15)
     assert np.max(dt) == pytest.approx(0.04)
-    ref = rn.RoadRunner(sbml)
+    ref = rn.core.RoadRunner(sbml)
     ref.setIntegratorSetting('relative_tolerance', 1e-12)
     ref.setIntegratorSetting('absolute_tolerance', 1e-14)
     tight = np.asarray(ref.simulateTimes(y[:, 0].tolist()))
@@ -636,7 +636,7 @@ def test_cvode_step_settings():
 
 
 def test_gillespie_step_settings():
-    b = rn.RoadRunner(rn.antimony_to_sbml("S1 -> ; 100; S1 = 1"))
+    b = rn.core.RoadRunner(rn.antimony_to_sbml("S1 -> ; 100; S1 = 1"))
     b.setIntegrator('gillespie')
     b.setSeed(17)
     b.setIntegratorSetting('nonnegative', True)
@@ -649,7 +649,7 @@ def test_gillespie_step_settings():
     with pytest.raises(ValueError, match='maximum_num_steps'):
         b.simulate(0, 1, 2)
 
-    b = rn.RoadRunner(rn.antimony_to_sbml("S1 -> ; 0; S1 = 1"))
+    b = rn.core.RoadRunner(rn.antimony_to_sbml("S1 -> ; 0; S1 = 1"))
     b.setIntegrator('gillespie')
     b.setIntegratorSetting('maximum_time_step', 0.25)
     y = np.asarray(b.simulate(0, 1, 2))
@@ -660,7 +660,7 @@ def test_gillespie_step_settings():
 
 
 def test_gillespie_and_state(tmp_path):
-    b = rn.RoadRunner(rn.antimony_to_sbml('J1: S1 -> S2; k1*S1; S1 = 100; S2 = 0; k1 = 0.5'))
+    b = rn.core.RoadRunner(rn.antimony_to_sbml('J1: S1 -> S2; k1*S1; S1 = 100; S2 = 0; k1 = 0.5'))
     b.setIntegrator('gillespie')
     b.setSeed(7)
     y1 = b.gillespie(0, 5, 11)
@@ -680,7 +680,7 @@ def test_gillespie_and_state(tmp_path):
     b.setValue('k1', 0.7)
     p = str(tmp_path / 'state.txt')
     b.saveState(p)
-    c = rn.RoadRunner()
+    c = rn.core.RoadRunner()
     c.loadState(p)
     assert c.getCurrentTime() == 2 and c.getValue('k1') == 0.7
     cmp(c.simulate(2, 4, 5), b.simulate(2, 4, 5), 1e-6, 1e-9, False)
@@ -688,7 +688,7 @@ def test_gillespie_and_state(tmp_path):
 
 def test_reset_rate_rule_compartment():
     # libroadrunner 2.11: reset() brings the rate-rule compartment and [S1] back together (1, 1, 1)
-    r = rn.RoadRunner(rn.antimony_to_sbml("compartment c = 1; c' = 0.1; S1 in c; S1 = 1; J1: S1 -> ; k*S1; k = 0.2"))
+    r = rn.core.RoadRunner(rn.antimony_to_sbml("compartment c = 1; c' = 0.1; S1 in c; S1 = 1; J1: S1 -> ; k*S1; k = 0.2"))
     r.simulate(0, 5, 6)
     r.reset()
     assert r.getValue('c') == 1 and abs(r.getValue('[S1]') - 1) < 1e-12 and abs(r.getValue('S1') - 1) < 1e-12
@@ -699,7 +699,7 @@ def test_big_model_load_defers_structural_analysis():
     src = open(os.path.join(HERE, 'models', 'bigmodel', 'synthetic_1000_species.ant')).read()
     sbml = rn.antimony_to_sbml(src)
     t = time.perf_counter()
-    r = rn.RoadRunner(sbml)
+    r = rn.core.RoadRunner(sbml)
     assert time.perf_counter() - t < 0.74  # libstruct's QR runs on the first structural query
     assert len(r.getIndependentFloatingSpeciesIds()) + len(r.getDependentFloatingSpeciesIds()) == len(r.getFloatingSpeciesIds())
 
@@ -707,13 +707,13 @@ def test_big_model_load_defers_structural_analysis():
 @pytest.mark.parametrize('volume', ["c = 1; c' = 0.1", "c := 1 + 2*p; p = 0; p' = 0.05"])
 def test_amount_rate_variable_compartment(volume):
     # S1' is d(amount)/dt = reaction rate k*[S1] (libroadrunner agrees); V d[S1]/dt alone misses C dV/dt
-    r = rn.RoadRunner(rn.antimony_to_sbml(f"compartment c; {volume}; S1 in c; S1 = 1; J1: S1 -> ; k*S1; k = 0.2"))
+    r = rn.core.RoadRunner(rn.antimony_to_sbml(f"compartment c; {volume}; S1 in c; S1 = 1; J1: S1 -> ; k*S1; k = 0.2"))
     r.simulate(0, 2, 3)
     assert abs(r.getValue("S1'") + 0.2 * r.getValue('[S1]')) < 1e-12
 
 
 def test_amount_rate_rule_in_assignment_compartment():
-    r = rn.RoadRunner(rn.antimony_to_sbml(
+    r = rn.core.RoadRunner(rn.antimony_to_sbml(
         "compartment c; c := 1 + 0.1*time; substanceOnly species S1 in c; S1 = 1; S1' = 2"))
     r.setIntegratorSetting('relative_tolerance', 1e-11)
     r.setIntegratorSetting('absolute_tolerance', 1e-13)
@@ -726,7 +726,7 @@ def test_steady_state_found_where_newton_alone_fails():
     # sosbench 00009 (MAPK cascade) after simulate(0, 10): Newton fails from there with default settings
     # (libroadrunner: "Maximum iterations exceeded"), but the model has a steady state. Nitro finds it.
     f = next(p for p in SOS if os.sep + '00009' + os.sep in p)
-    r = rn.RoadRunner(open(f).read())
+    r = rn.core.RoadRunner(open(f).read())
     r.simulate(0, 10, 6)
     r.steadyState()
     x = np.array([r.getValue(i.rstrip("'")) for i in r.getRatesOfChangeIds()])
@@ -735,7 +735,7 @@ def test_steady_state_found_where_newton_alone_fails():
 
 def test_reset_reevaluates_initial_assignment_with_function():
     # libroadrunner 2.11: reset() re-evaluates S1 = f(k1) with the new k1 (10)
-    r = rn.RoadRunner(rn.antimony_to_sbml('function f(x)\n 2*x\nend\nJ1: S1 -> S2; k2*S1; S1 = f(k1); S2 = 0; k1 = 3; k2 = 0.1'))
+    r = rn.core.RoadRunner(rn.antimony_to_sbml('function f(x)\n 2*x\nend\nJ1: S1 -> S2; k2*S1; S1 = f(k1); S2 = 0; k1 = 3; k2 = 0.1'))
     r.simulate(0, 2, 3)
     r.setValue('k1', 5)
     r.reset()
@@ -744,11 +744,11 @@ def test_reset_reevaluates_initial_assignment_with_function():
 
 def test_save_load_state_keeps_delay_history(tmp_path):
     # a continued delay model reads its history: a loaded state must carry it
-    b = rn.RoadRunner(rn.antimony_to_sbml('J1: -> S1; k*delay(S1, 1.5); J2: S1 -> ; 0.5*S1; S1 = 1; k = 0.4'))
+    b = rn.core.RoadRunner(rn.antimony_to_sbml('J1: -> S1; k*delay(S1, 1.5); J2: S1 -> ; 0.5*S1; S1 = 1; k = 0.4'))
     b.simulate(0, 3, 7)
     p = str(tmp_path / 'delay.txt')
     b.saveState(p)
-    c = rn.RoadRunner()
+    c = rn.core.RoadRunner()
     c.loadState(p)
     cmp(c.simulate(3, 5, 9), b.simulate(3, 5, 9), 1e-12, 1e-14, False)
 
@@ -762,7 +762,7 @@ def test_get_sbml_explicit_stoichiometry():
             '<reaction id="J"><listOfReactants><speciesReference species="A"/></listOfReactants><listOfProducts>'
             '<speciesReference species="B"/></listOfProducts><kineticLaw><math xmlns="http://www.w3.org/1998/Math/MathML">'
             '<apply><times/><ci>k</ci><ci>A</ci></apply></math></kineticLaw></reaction></listOfReactions></model></sbml>')
-    out = rn.RoadRunner(sbml).getSBML()
+    out = rn.core.RoadRunner(sbml).getSBML()
     assert re.findall(r'<speciesReference [^>]*>', out) == ['<speciesReference species="A" stoichiometry="1"/>',
                                                            '<speciesReference species="B" stoichiometry="1"/>']
-    cmp(rn.RoadRunner(out).simulate(0, 5, 6), rn.RoadRunner(sbml).simulate(0, 5, 6), 1e-14, 1e-16, False)
+    cmp(rn.core.RoadRunner(out).simulate(0, 5, 6), rn.core.RoadRunner(sbml).simulate(0, 5, 6), 1e-14, 1e-16, False)

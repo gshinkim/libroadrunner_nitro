@@ -42,7 +42,7 @@ def test_sbml_conversion_matches_libsbml(key):
     if group == "semantic" and not SEMANTIC.is_dir():
         pytest.skip("SBML Test Suite not found: set SBML_SEMANTIC_DIR to its cases/semantic folder")
     assert hashlib.sha256(path.read_bytes()).hexdigest() == reference["sha256"]
-    r = rn.RoadRunner(str(path))
+    r = rn.core.RoadRunner(str(path))
     ids, values = snapshot(r)
     want = simulate(r, ids)
     for (level, version), success in zip(LEVELS, reference["success"], strict=True):
@@ -53,7 +53,7 @@ def test_sbml_conversion_matches_libsbml(key):
         text = r.getSBML(level, version)
         root = ET.fromstring(text)
         assert (root.get("level"), root.get("version")) == (str(level), str(version))
-        b = rn.RoadRunner(text)
+        b = rn.core.RoadRunner(text)
         got_ids, got_values = snapshot(b)
         assert got_ids == ids
         for got, expected in zip(got_values, values, strict=True):

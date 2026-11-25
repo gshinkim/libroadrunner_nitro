@@ -110,7 +110,7 @@ def test_fixed_vs_roadrunner():
 
 
 def tight(sbml, sel, times):
-    r = rn.RoadRunner(sbml)
+    r = rn.core.RoadRunner(sbml)
     r.setIntegratorSetting('relative_tolerance', 1e-12)
     r.setIntegratorSetting('absolute_tolerance', 1e-14)
     r.timeCourseSelections = sel
@@ -129,7 +129,7 @@ def test_rk45_variable_step(name, index):
         exact = ref[key + '/cvode'][:, 1:]
         scale = np.abs(exact).max(axis=0) + 1e-300
         ea = (np.abs(ya[:, 1:] - exact) / scale).max()
-    b = rn.RoadRunner(sbml)
+    b = rn.core.RoadRunner(sbml)
     b.setIntegrator('rk45')
     for k, v in dict(epsilon=eps, maximum_time_step=hmax, max_output_rows=rows).items():
         b.setIntegratorSetting(k, v)
@@ -164,7 +164,7 @@ def test_fixed_events(method, step, tol):
 
 def test_rk45_variable_events_across_one_step_calls():
     sbml = sbml_of(ANT['events'])
-    r = rn.RoadRunner(sbml)
+    r = rn.core.RoadRunner(sbml)
     r.setIntegrator('rk45')
     r.timeCourseSelections = ['time', '[S1]', '[S2]', 'k']
     y = np.asarray(r.simulate(0, 4)).reshape(-1, 4)
