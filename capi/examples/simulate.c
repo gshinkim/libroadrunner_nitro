@@ -1,9 +1,9 @@
 /* Simulate a model, find its steady state and a control coefficient through libroadrunner's C API,
- * on Tellurium Nitro's engine (libroadrunner_nitro_c_api). Build and run from the repo root:
+ * on Tellurium Nitro's engine (libroadrunner_nitro_c_api). Build and run from the repository folder:
  *
- *   cd rrs && cargo build --release -p roadrunner_nitro_c_api && cd ..
- *   cc -I rrs/capi/include rrs/capi/examples/simulate.c -L rrs/target/release -lroadrunner_nitro_c_api \
- *      -Wl,-rpath,$PWD/rrs/target/release -o simulate
+ *   cargo build --release -p roadrunner_nitro_c_api
+ *   cc -I capi/include capi/examples/simulate.c -L target/release -lroadrunner_nitro_c_api \
+ *      -Wl,-rpath,$PWD/target/release -o simulate
  *   ./simulate                  # the built-in model
  *   ./simulate my_model.xml     # or any SBML file
  */
