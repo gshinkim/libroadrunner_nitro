@@ -106,6 +106,34 @@ pub extern "C" fn getWorkingDirectory() -> *mut c_char {
 }
 
 /// Directory containing this shared library.
+#[cfg(windows)]
+#[no_mangle]
+pub extern "C" fn getRRCAPILocation() -> *mut c_char {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetModuleHandleExW(flags: u32, addr: *const u16, module: *mut *mut libc::c_void) -> i32;
+        fn GetModuleFileNameW(module: *mut libc::c_void, buf: *mut u16, size: u32) -> u32;
+    }
+    // GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT
+    const FLAGS: u32 = 0x4 | 0x2;
+    let mut module = null_mut();
+    if unsafe { GetModuleHandleExW(FLAGS, getRRCAPILocation as *const u16, &mut module) } == 0 {
+        set_error("getRRCAPILocation: GetModuleHandleExW failed");
+        return null_mut();
+    }
+    let mut buf = vec![0u16; 32768];
+    let n = unsafe { GetModuleFileNameW(module, buf.as_mut_ptr(), buf.len() as u32) } as usize;
+    if n == 0 || n >= buf.len() {
+        set_error("getRRCAPILocation: GetModuleFileNameW failed");
+        return null_mut();
+    }
+    let path = String::from_utf16_lossy(&buf[..n]);
+    let dir = std::path::Path::new(&path).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    text(&dir)
+}
+
+/// Directory containing this shared library.
+#[cfg(not(windows))]
 #[no_mangle]
 pub extern "C" fn getRRCAPILocation() -> *mut c_char {
     let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
