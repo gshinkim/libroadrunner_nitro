@@ -33,3 +33,8 @@ for name, ant, t0, t1, n in MODELS[1:]:
         e = err(y); j = e.max(axis=0).argmax(); i = e[:, j].argmax()
         print(f'  {lab:22s}: max rel err {e.max():.2e} (median over columns {np.median(e.max(axis=0)):.1e}); '
               f'worst {cols[j]} at t={ref_rr[i,0]:.3g}: ref {ref_rr[i,j]:.4g}, got {y[i,j]:.4g}, column max {sc[j]:.3g}')
+    # Species that stay far below the absolute tolerance (e.g. ~1e-123 at the end of the chain) are
+    # noise in every solver: score again with each column's scale floored at 1e-6.
+    sc6 = np.maximum(sc, 1e-6)
+    for lab, y in (('tight nitro', ref_n), ('default libroadrunner', d_rr), ('default nitro', d_n)):
+        print(f'  {lab:22s}: max rel err, scale floored at 1e-6: {(np.abs(y - ref_rr) / sc6).max():.2e}')
