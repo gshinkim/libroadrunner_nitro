@@ -4,10 +4,15 @@ build-backend = "maturin"
 
 [project]
 name = "libroadrunner_nitro"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.9"
 dependencies = ["numpy"]
 
+[project.optional-dependencies]
+plot = ["matplotlib"]
+
 [tool.maturin]
-module-name = "roadrunner_nitro"
+# The Rust extension is roadrunner_nitro.core; python/roadrunner_nitro is the public package around it.
+python-source = "python"
+module-name = "roadrunner_nitro.core"
 features = ["python"]

@@ -8,7 +8,7 @@ import pytest
 import roadrunner_nitro as rn
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SOS = sorted(glob.glob(os.path.join(HERE, '..', '..', 'benchmarks', 'sosbench', '*', '*.xml')))
+SOS = sorted(glob.glob(os.path.join(HERE, 'models', 'sosbench', '*', '*.xml')))
 
 ANT = {
     'rate_rule_time': '''

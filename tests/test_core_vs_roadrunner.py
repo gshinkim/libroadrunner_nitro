@@ -19,7 +19,7 @@ import roadrunner_nitro as rn
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REF = os.path.join(HERE, 'reference')
-SOS = sorted(glob.glob(os.path.join(HERE, '..', '..', 'benchmarks', 'sosbench', '*', '*.xml')))
+SOS = sorted(glob.glob(os.path.join(HERE, 'models', 'sosbench', '*', '*.xml')))
 ANT = {
     'moieties': '''
         compartment C = 2
@@ -696,7 +696,7 @@ def test_reset_rate_rule_compartment():
 
 def test_big_model_load_defers_structural_analysis():
     import time
-    src = open(os.path.join(HERE, '..', '..', 'benchmarks', 'bigmodel', 'synthetic_1000_species.ant')).read()
+    src = open(os.path.join(HERE, 'models', 'bigmodel', 'synthetic_1000_species.ant')).read()
     sbml = rn.antimony_to_sbml(src)
     t = time.perf_counter()
     r = rn.RoadRunner(sbml)

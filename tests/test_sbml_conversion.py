@@ -12,7 +12,7 @@ import roadrunner_nitro as rn
 from make_conversion_reference import LEVELS, HERE, REFERENCE, SOSBENCH
 
 CASES = json.loads(REFERENCE.read_text())
-SEMANTIC = Path(os.environ.get("SBML_SEMANTIC_DIR", HERE.parents[1] / "benchmarks/sts/suite/cases/semantic"))
+SEMANTIC = Path(os.environ.get("SBML_SEMANTIC_DIR", HERE / "models" / "sbml-test-suite" / "cases" / "semantic"))
 GROUPS = {
     "sosbench": SOSBENCH,
     "semantic": SEMANTIC,
@@ -39,6 +39,8 @@ def test_sbml_conversion_matches_libsbml(key):
     group, case = key.split("/")
     reference = CASES[key]
     path = GROUPS[group] / case / reference["file"]
+    if group == "semantic" and not SEMANTIC.is_dir():
+        pytest.skip("SBML Test Suite not found: set SBML_SEMANTIC_DIR to its cases/semantic folder")
     assert hashlib.sha256(path.read_bytes()).hexdigest() == reference["sha256"]
     r = rn.RoadRunner(str(path))
     ids, values = snapshot(r)

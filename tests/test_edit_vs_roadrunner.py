@@ -52,7 +52,7 @@ end''']
 
 def models():
     out = []
-    for f in sorted(glob.glob(os.path.join(HERE, '../../benchmarks/sosbench/*/*.xml'))):
+    for f in sorted(glob.glob(os.path.join(HERE, 'models/sosbench/*/*.xml'))):
         out.append((os.path.basename(f), open(f).read()))
     for src in ANT:
         assert antimony.loadAntimonyString(src) >= 0, antimony.getLastError()
