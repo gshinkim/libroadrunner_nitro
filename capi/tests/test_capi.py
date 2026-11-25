@@ -510,7 +510,7 @@ def test_individual_tolerance():
     p, n = pD(), C.c_int()
     assert L.getCurrentIntegratorParameterDoubleArray(h, b'absolute_tolerance', C.byref(p), C.byref(n)) == 1
     vals = [p[i] for i in range(n.value)]
-    C.CDLL(None).free(p)
+    (C.cdll.ucrtbase if sys.platform == 'win32' else C.CDLL(None)).free(p)  # the CRT the library mallocs from
     np.testing.assert_allclose(vals, [3e-6, 2e-3, 1e-20], rtol=1e-15)  # libroadrunner: [3e-06, 0.002, 1e-18 as set]
     L.reset(h)
     tight = take_cdata(L.simulateEx(h, 0, 4, 9))[0][:, 2]

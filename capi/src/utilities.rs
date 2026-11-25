@@ -36,7 +36,12 @@ fn index(what: &str, rows: c_int, cols: c_int, r: c_int, c: c_int) -> Option<usi
 
 #[no_mangle]
 pub unsafe extern "C" fn createText(t: *const c_char) -> *mut c_char {
-    if t.is_null() { null_mut() } else { libc::strdup(t) }
+    // malloc + copy rather than strdup, which the MSVC CRT only exports as _strdup
+    if t.is_null() { return null_mut(); }
+    let n = libc::strlen(t) + 1;
+    let p = libc::malloc(n) as *mut c_char;
+    if !p.is_null() { std::ptr::copy_nonoverlapping(t, p, n); }
+    p
 }
 
 #[no_mangle]
