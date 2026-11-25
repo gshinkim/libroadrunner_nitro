@@ -8,10 +8,11 @@ from xml.sax.saxutils import quoteattr
 import numpy as np
 
 from . import core
-from .config import SelectionRecord
+from .config import Config, SelectionRecord
 from .model import ExecutableModel
 from .named_array import NamedArray, _named
-from .solvers import INTEGRATORS, STEADY_STATE_SOLVERS, Solver, SensitivitySolver
+from .options import LoadSBMLOptions, RoadRunnerOptions, SimulateOptions
+from .solvers import INTEGRATORS, STEADY_STATE_SOLVERS, Solver, SensitivitySolver, solver_for
 
 # Model getters libroadrunner's RoadRunner has itself; the rest live on r.model (Tellurium adds them to r).
 _MODEL_FUNCTIONS = ['getReactionRates', 'getStoichiometryIds']
@@ -90,33 +91,78 @@ class RoadRunner(object):
 
     RoadRunner(sbml=None): SBML text or a file path."""
 
+    _instances = 0
+
     def __init__(self, sbml=None, options=None):
-        # options (libroadrunner's LoadSBMLOptions): the Rust engine has no load options
+        """``options``: libroadrunner's LoadSBMLOptions; its conservedMoieties flag is applied, the
+        compiler flags have no effect (the engine compiles every model the same way)."""
+        if isinstance(sbml, LoadSBMLOptions):  # RoadRunner(options)
+            sbml, options = None, sbml
+        RoadRunner._instances += 1
         object.__setattr__(self, '_rr', core.RoadRunner())
         object.__setattr__(self, '_data', None)
         object.__setattr__(self, '_last_run', None)
         object.__setattr__(self, '_attrs', None)
-        object.__setattr__(self, 'model', ExecutableModel(self))
+        object.__setattr__(self, '_model', ExecutableModel(self))
         object.__setattr__(self, '_sens', SensitivitySolver())
+        object.__setattr__(self, '_options', RoadRunnerOptions())
+        object.__setattr__(self, '_id', RoadRunner._instances)
+        object.__setattr__(self, '_made', ({'cvode'}, {'nleq2'}))  # solvers made so far (libroadrunner's defaults)
         if sbml is not None:
-            self.load(sbml)
+            self.load(sbml, options)
+
+    @property
+    def model(self):
+        """The loaded model (libroadrunner's ExecutableModel)."""
+        return self._model
+
+    @property
+    def options(self):
+        return self._options
+
+    def setOptions(self, options):
+        object.__setattr__(self, '_options', options)
+
+    def getInstanceID(self):
+        return self._id
+
+    def getInstanceCount(self):
+        return RoadRunner._instances
+
+    def getCompiler(self):
+        """libroadrunner returns its LLVM compiler object; the engine compiles with Cranelift in process."""
+        return Compiler()
+
+    def registerSolvers(self):
+        """Kept for compatibility: the engine's solvers are always available."""
+
+    def createSelection(self, sel):
+        """A SelectionRecord-like object for selection string ``sel`` (its value: r.getValue(sel))."""
+        self._rr.getValue(sel)  # raises for an unknown selection, as libroadrunner does
+        rec = SelectionRecord()
+        rec.selectionString = rec.p1 = sel
+        return rec
 
     # ------------------------------------------------------------ loading, SBML
-    def load(self, sbml):
-        """Load an SBML model from text or a file path."""
+    def load(self, sbml, options=None):
+        """Load an SBML model from text or a file path (``options``: LoadSBMLOptions, see __init__)."""
         if isinstance(sbml, bytes):
             sbml = sbml.decode('utf-8')
         if sbml.startswith('file://'):
             sbml = sbml[len('file://'):]
         self._rr.load(sbml)
         self._changed()
+        if options is not None and getattr(options, 'conservedMoieties', False):
+            self.conservedMoietyAnalysis = True
 
     def _changed(self):  # the model's ids may have changed
         object.__setattr__(self, '_attrs', None)
 
     def clearModel(self):
+        """Unload the model; True, as libroadrunner."""
         self._rr.clearModel()
         self._changed()
+        return True
 
     def isModelLoaded(self):
         return self._rr.isModelLoaded()
@@ -153,17 +199,31 @@ class RoadRunner(object):
                           'model loaded: %s' % rr.isModelLoaded(), 'modelName: %s' % self.getModelName(),
                           'integrator: %s' % rr.getIntegratorName(), 'conservedMoietyAnalysis: %s' % rr.conservedMoietyAnalysis,
                           'floating species: %d' % len(rr.getFloatingSpeciesIds()),
-                          'reactions: %d' % len(rr.getReactionIds())])
+                          'reactions: %d' % len(rr.getReactionIds()),
+                          'jacobianStepSize: %g' % self._options.jacobianStepSize,
+                          'diffStepSize: %g' % self.getDiffStepSize(),
+                          'steadyStateThreshold: %g' % self.getSteadyStateThreshold(),
+                          'fluxThreshold: %g' % self.getFluxThreshold()])
 
     def getExtendedVersionInfo(self):
         return 'roadrunner_nitro (Rust engine)'
 
     # ------------------------------------------------------------ values
     def getValue(self, sel):
-        return self._rr.getValue(sel)
+        try:
+            return self._rr.getValue(sel)
+        except ValueError as e:
+            raise RoadRunnerError(str(e)) from None
 
     def setValue(self, sel, value):
-        self._rr.setValue(sel, float(value))
+        ids = self._rr.getStoichiometryIds() if self._rr.isModelLoaded() else []
+        if sel in ids and not sel.startswith('stoich('):  # a named stoichiometry (speciesReference id)
+            self._rr.setStoichiometry(ids.index(sel), float(value))
+            return
+        try:
+            self._rr.setValue(sel, float(value))
+        except ValueError as e:
+            raise RoadRunnerError(str(e)) from None
 
     def setValues(self, keysOrDict, values=None):
         items = keysOrDict.items() if values is None else zip(keysOrDict, values)
@@ -172,20 +232,30 @@ class RoadRunner(object):
 
     def __getitem__(self, sel):
         if isinstance(sel, (list, tuple)):
-            return np.array(self._rr.getValues(list(sel)))
-        return self._rr.getValue(sel)
+            try:
+                return np.array(self._rr.getValues(list(sel)))
+            except ValueError as e:
+                raise RoadRunnerError(str(e)) from None
+        return self.getValue(sel)
 
     def __setitem__(self, sel, value):
         self.setValue(sel, value)
 
     def keys(self):
-        return self.model.keys()
+        """Every selection r[...] accepts, in libroadrunner's order."""
+        return list(self._rr.getIds(SelectionRecord.ALL))
 
     def values(self):
-        return self.model.values()
+        return [self.getValue(k) for k in self.keys()]
 
     def items(self):
-        return self.model.items()
+        return list(zip(self.keys(), self.values()))
+
+    def __len__(self):
+        return len(self.keys())
+
+    def __repr__(self):
+        return '<roadrunner.RoadRunner() { this = %#x }>' % id(self)
 
     iterkeys, itervalues, iteritems = keys, values, items
 
@@ -213,18 +283,19 @@ class RoadRunner(object):
                 a.update({s: '[%s]' % s, s + '_conc': '[%s]' % s, s + '_amt': s})
             a.update({s: '[%s]' % s for s in rr.getBoundarySpeciesIds()})
             a.update({k: k for k in rr.getGlobalParameterIds() + rr.getCompartmentIds() + rr.getReactionIds()})
+            a.update({k: k for k in rr.getStoichiometryIds() if not k.startswith('stoich(')})  # named stoichiometries
             object.__setattr__(self, '_attrs', a)
         return a
 
     def __getattr__(self, name):
-        if not name.startswith('_'):
+        if not name.startswith('__') and name not in _INTERNAL:
             sel = self._attr_map().get(name)
             if sel is not None:
                 return self._rr.getValue(sel)
         raise AttributeError("'RoadRunner' object has no attribute '%s'" % name)
 
     def __setattr__(self, name, value):
-        if not name.startswith('_') and not hasattr(type(self), name):
+        if not name.startswith('__') and name not in _INTERNAL and not hasattr(type(self), name):
             sel = self._attr_map().get(name)
             if sel is not None:
                 return self.setValue(sel, value)
@@ -255,7 +326,7 @@ class RoadRunner(object):
         lambda self, s: setattr(self._rr, 'steadyStateSelections', list(s)))
 
     def getSteadyStateSelectionStrings(self):
-        return self.steadyStateSelections
+        return tuple(self.steadyStateSelections)
 
     @property
     def conservedMoietyAnalysis(self):
@@ -268,17 +339,20 @@ class RoadRunner(object):
 
     # ------------------------------------------------------------ solvers
     def getIntegrator(self):
-        return Solver(self._rr, False)
+        return solver_for(self._rr, False)
 
     def setIntegrator(self, name):
-        self._rr.setIntegrator(name if isinstance(name, str) else name.getName())
+        name = name if isinstance(name, str) else name.getName()
+        self._rr.setIntegrator(name)
+        self._made[0].add(name)
 
     integrator = property(getIntegrator, setIntegrator)
 
     def getIntegratorByName(self, name):
         if name not in INTEGRATORS:
             raise ValueError("no integrator '%s' (one of %s)" % (name, INTEGRATORS))
-        return Solver(self._rr, False, name)
+        self._made[0].add(name)
+        return solver_for(self._rr, False, name)
 
     makeIntegrator = getIntegratorByName
 
@@ -286,35 +360,44 @@ class RoadRunner(object):
         self.getIntegratorByName(integratorName).setValue(settingName, value)
 
     def integratorExists(self, name):
-        return name in INTEGRATORS
+        """Whether integrator ``name`` has been made for this instance (as libroadrunner)."""
+        return name in self._made[0]
 
     def getExistingIntegratorNames(self):
-        return list(INTEGRATORS)
+        return tuple(n for n in INTEGRATORS if n in self._made[0])
 
-    getAvailableIntegrators = getRegisteredIntegratorNames = getExistingIntegratorNames
+    getAvailableIntegrators = getExistingIntegratorNames
+
+    def getRegisteredIntegratorNames(self):
+        return tuple(INTEGRATORS)
 
     def getSteadyStateSolver(self):
-        return Solver(self._rr, True)
+        return solver_for(self._rr, True)
 
     def setSteadyStateSolver(self, name):
-        self._rr.setSteadyStateSolver(name if isinstance(name, str) else name.getName())
+        name = name if isinstance(name, str) else name.getName()
+        self._rr.setSteadyStateSolver(name)
+        self._made[1].add(name)
 
     steadyStateSolver = property(getSteadyStateSolver, setSteadyStateSolver)
 
     def getSteadyStateSolverByName(self, name):
         if name not in STEADY_STATE_SOLVERS:
             raise ValueError("no steady-state solver '%s' (one of %s)" % (name, STEADY_STATE_SOLVERS))
-        return Solver(self._rr, True, name)
+        self._made[1].add(name)
+        return solver_for(self._rr, True, name)
 
     makeSteadyStateSolver = getSteadyStateSolverByName
 
     def steadyStateSolverExists(self, name):
-        return name in STEADY_STATE_SOLVERS
+        """Whether steady-state solver ``name`` has been made for this instance (as libroadrunner)."""
+        return name in self._made[1]
 
     def getExistingSteadyStateSolverNames(self):
-        return list(STEADY_STATE_SOLVERS)
+        return tuple(n for n in STEADY_STATE_SOLVERS if n in self._made[1])
 
-    getRegisteredSteadyStateSolverNames = getExistingSteadyStateSolverNames
+    def getRegisteredSteadyStateSolverNames(self):
+        return tuple(STEADY_STATE_SOLVERS)
 
     def getSensitivitySolver(self):
         return self._sens
@@ -333,7 +416,7 @@ class RoadRunner(object):
         return name == 'forward'
 
     def getExistingSensitivitySolverNames(self):
-        return ['forward']
+        return ('forward',)
 
     getRegisteredSensitivitySolverNames = getExistingSensitivitySolverNames
 
@@ -375,6 +458,12 @@ class RoadRunner(object):
         """Time course from ``start`` to ``end`` at ``points`` points (or ``steps`` + 1, or at ``times``)
         with the current integrator; returns a NamedArray (columns: the selections, which become
         timeCourseSelections). The model is left at the end. ``output_file``: also written as CSV."""
+        if isinstance(start, SimulateOptions):  # simulate(SimulateOptions)
+            o = start
+            if o.reset_model:
+                self.reset()
+            start, end, points, times = o.start, o.end, o.steps + 1, (list(o.times) or None)
+            output_file = output_file or o.output_file or None
         if isinstance(points, (list, tuple)):  # simulate(start, end, selections)
             points, selections = None, points
         if steps is not None:
@@ -404,7 +493,28 @@ class RoadRunner(object):
         return out
 
     def getSimulationData(self):
-        return self._data
+        """The last simulate() result (an empty NamedArray before any)."""
+        return NamedArray(np.zeros((0, 0))) if self._data is None else self._data
+
+    # libroadrunner's private names, used by its own tests
+    def _simulate(self, opt=None):
+        return self.simulate(opt) if opt is not None else self.simulate()
+
+    def _diffstep_getter(self):
+        return self.getDiffStepSize()
+
+    def _diffstep_stter(self, value):
+        self.setDiffStepSize(value)
+
+    def _getConservedMoietyAnalysis(self):
+        return self.conservedMoietyAnalysis
+
+    def _setConservedMoietyAnalysis(self, on):
+        self.conservedMoietyAnalysis = on
+
+    def _makeProperties(self):
+        """Refresh r.<id> attribute access after the model's ids changed."""
+        self._changed()
 
     def internalOneStep(self, currentTime, stepSize, reset=True):
         self._ran('internalOneStep')
@@ -453,7 +563,7 @@ class RoadRunner(object):
         out = np.full((len(vals), points, len(sel)), np.nan)
         if ok and len(vals):
             ig = self.integrator
-            ic = dict(zip(self.getFloatingSpeciesIds(), self.model.getFloatingSpeciesInitConcentrations()))
+            ic = dict(zip(self.model.getFloatingSpeciesIds(), self.model.getFloatingSpeciesInitConcentrations()))
             asc = [abs(ic[s]) if abs(ic.get(s, 0.0)) > 1e-30 else 1.0 for s in m.state_ids]
             Y = np.asarray(m.simulate_batch([k.strip('[]') for k in names], vals, times, threads=threads,
                                             rtol=float(ig.relative_tolerance), atol=float(ig.absolute_tolerance),
@@ -474,7 +584,7 @@ class RoadRunner(object):
         r.setIntegrator(self.integrator.getName())
         for k, x in self.integrator.getSettingsMap().items():
             r.integrator.setValue(k, x)
-        sp = set(r.getFloatingSpeciesIds()) | set(r.getBoundarySpeciesIds())
+        sp = set(r.model.getFloatingSpeciesIds()) | set(r.model.getBoundarySpeciesIds())
         for k, x in zip(names, v):
             r.setValue('[%s]' % k if k in sp else k, float(x))  # species ids are concentrations
         return np.asarray(r.simulate(start, end, points, sel))
@@ -490,12 +600,12 @@ class RoadRunner(object):
             raise ValueError('timeSeriesSensitivities: k must be 0 or 1')
         info = {}
         m = from_sbml(self.getCurrentSBML(), info)
-        states, fids = list(m.state_ids), self.getFloatingSpeciesIds()
+        states, fids = list(m.state_ids), self.model.getFloatingSpeciesIds()
         cma = self.conservedMoietyAnalysis
         cs = self.getConservedMoietyIds() if cma else []
         rr_ids = [v for v in self.getRateRuleIds() if v in states and v not in fids]
         base = rr_ids + (self.getIndependentFloatingSpeciesIds() if cma else fids)
-        params = list(params) or self.getGlobalParameterIds()
+        params = list(params) or self.model.getGlobalParameterIds()
         species = [s for s in base if not species or s in species]
         zero = set(rr_ids)
         rp = [p for p in params if p not in cs and p not in zero]
@@ -503,7 +613,7 @@ class RoadRunner(object):
         times = np.linspace(start, stop, int(num))
         X, S = core.time_sensitivities(m, [], [], times, rp + dep, order=k, rtol=self._sens.relative_tolerance,
                                                    atol=self._sens.absolute_tolerance)
-        vol = {c: self.getValue(c) for c in self.getCompartmentIds()}
+        vol = {c: self.getValue(c) for c in self.model.getCompartmentIds()}
         V = np.array([vol.get(info['comp_of'].get(s), 1.0) for s in fids])
         rows = []
         if dep:  # moiety total T moves the dependent species: d conc_dep / d T = inv(Gamma[:, dep]) / V_dep
@@ -699,10 +809,26 @@ class RoadRunner(object):
         return NamedArray(np.column_stack([e.real, e.imag]), self._rr.getReducedJacobian()[1], ['real', 'imaginary'])
 
     def getUnscaledElasticityMatrix(self):
-        return self._mat('getElasticityMatrix', False)
+        return self._amount_mode(self._mat('getElasticityMatrix', False))
 
     def getScaledElasticityMatrix(self):
-        return self._mat('getElasticityMatrix', True)
+        return self._amount_mode(self._mat('getElasticityMatrix', True))
+
+    def _amount_mode(self, e):
+        """With Config.ROADRUNNER_JACOBIAN_MODE = ROADRUNNER_JACOBIAN_MODE_AMOUNTS, elasticities are taken with
+        respect to species amounts, as libroadrunner: each floating species column is divided by the volume
+        of its compartment (libroadrunner does this for the scaled matrix too)."""
+        if Config.getValue(Config.ROADRUNNER_JACOBIAN_MODE) != Config.ROADRUNNER_JACOBIAN_MODE_AMOUNTS:
+            return e
+        m = self.model
+        fs = m.getFloatingSpeciesIds()
+        vols = m.getCompartmentVolumes()
+        vol = {s: vols[m.getCompartmentIndexForFloatingSpecies(i)] for i, s in enumerate(fs)}
+        a = np.array(e, dtype=float)
+        for j, c in enumerate(e.colnames):
+            if c in vol:
+                a[:, j] /= vol[c]
+        return NamedArray(a, e.rownames, e.colnames)
 
     def getUnscaledConcentrationControlCoefficientMatrix(self):
         return self._mat('getConcentrationControlCoefficientMatrix', False)
@@ -724,11 +850,16 @@ class RoadRunner(object):
         self._ran('getuCC')
         return self._rr.getuCC(variable, parameter)
 
+    # Elasticities are local properties of the rate laws, not of the steady state: they are evaluated at the
+    # current state, and computeSteadyState is accepted for compatibility but ignored (as libroadrunner does).
     def getEE(self, reactionName, parameterName, computeSteadyState=True):
-        return self._rr.getEE(reactionName, parameterName, bool(computeSteadyState))
+        """Scaled elasticity of reaction ``reactionName`` to ``parameterName`` (a parameter or species) at
+        the current state. ``computeSteadyState`` is ignored: elasticities are not a steady-state property."""
+        return self._rr.getEE(reactionName, parameterName, False)
 
     def getuEE(self, reactionName, parameterName, computeSteadyState=True):
-        return self._rr.getuEE(reactionName, parameterName, bool(computeSteadyState))
+        """Unscaled elasticity, as getEE."""
+        return self._rr.getuEE(reactionName, parameterName, False)
 
     def getScaledFloatingSpeciesElasticity(self, reactionId, speciesId):
         return self._rr.getEE(reactionId, speciesId, False)
@@ -856,11 +987,13 @@ class RoadRunner(object):
                    a.get('forceRegenerate', regen))
 
     def removeRules(self, vid, useInitialValue=False, forceRegenerate=True):
-        """Remove the rules of ``vid`` (``useInitialValue``: its value becomes the rule's value at time 0)."""
-        v = self.getValue('init(%s)' % vid) if useInitialValue else None
-        self._edit('remove_rules', [vid], forceRegenerate and v is None)
-        if v is not None:
-            self.setInitValue(vid, v, forceRegenerate)
+        """Remove the rules of ``vid``. Its current value becomes its initial value (``useInitialValue``)
+        or stays the value the rule gave it (as libroadrunner); its initial value is not changed."""
+        current = self.getValue(vid)
+        self._edit('remove_rules', [vid], forceRegenerate)
+        if not forceRegenerate:
+            return
+        self.setValue(vid, self.getValue('init(%s)' % vid) if useInitialValue else current)
 
     def setInitAmount(self, sid, initAmount, forceRegenerate=True):
         self._edit('set_init_amount', [sid, float(initAmount)], forceRegenerate)
@@ -871,9 +1004,9 @@ class RoadRunner(object):
     def setInitValue(self, sid, initValue, forceRegenerate=True):
         """Initial value of any species (amount), compartment or parameter."""
         sbml = self._rr.getSBML()
-        if sid in self.getFloatingSpeciesIds() + self.getBoundarySpeciesIds():
+        if sid in self.model.getFloatingSpeciesIds() + self.model.getBoundarySpeciesIds():
             return self.setInitAmount(sid, initValue, forceRegenerate)
-        tag, attr = ('compartment', 'size') if sid in self.getCompartmentIds() else ('parameter', 'value')
+        tag, attr = ('compartment', 'size') if sid in self.model.getCompartmentIds() else ('parameter', 'value')
         self._set_sbml(_set_attr(sbml, tag, sid, attr, repr(float(initValue))), forceRegenerate)
 
     def removeInitialAssignment(self, vid, forceRegenerate=True, errIfNotExist=True, replaceInitVal=True):
@@ -936,6 +1069,33 @@ class RoadRunner(object):
 
     def plotLegend(self):
         _pyplot().legend()
+
+
+for _n in ('getAssignmentRuleIds', 'getConservedMoietyIds', 'getEigenValueIds', 'getFloatingSpeciesInitialConcentrationIds',
+           'getInitialAssignmentIds', 'getRateRuleIds'):
+    setattr(RoadRunner, _n, (lambda f: lambda self, *a: tuple(f(self, *a)))(getattr(RoadRunner, _n)))
+
+
+class RoadRunnerError(ValueError, RuntimeError):
+    """An unknown selection or invalid value: a ValueError, and a RuntimeError as libroadrunner raises."""
+
+
+class Compiler(object):
+    """What r.getCompiler() returns: the engine compiles with Cranelift, in process."""
+
+    def getCompiler(self):
+        return 'cranelift'
+
+    def getVersion(self):
+        return 'cranelift'
+
+    def __str__(self):
+        return '<roadrunner.Compiler: cranelift (in process; no external compiler)>'
+
+    __repr__ = __str__
+
+
+_INTERNAL = {'_rr', '_data', '_last_run', '_attrs', '_model', '_sens', '_options', '_id', '_made'}
 
 
 def _pyplot():

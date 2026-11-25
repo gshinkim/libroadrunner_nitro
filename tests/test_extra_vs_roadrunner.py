@@ -209,8 +209,8 @@ def test_facade_stoichiometry_and_settings():
     with np.load(os.path.join(REF, 'chain.npz')) as ref:
         prefix = 'extra/0/'
         ids = m.getStoichiometryIds()
-        assert ids == ref[prefix + 'sids'].tolist()
-        assert [m.getStoichiometryId(i) for i in range(len(ids))] == ids
+        assert list(ids) == ref[prefix + 'sids'].tolist()  # libroadrunner returns a tuple
+        assert [m.getStoichiometryId(i) for i in range(len(ids))] == list(ids)
         assert [m.getStoichiometryIndex(s) for s in [*ids, 'missing']] == ref[prefix + 'stoich_index'].tolist()
         sp, rx = r.model.getFloatingSpeciesIds(), r.model.getReactionIds()
         assert [[m.getStoichiometryIndex(s, x) for x in rx] for s in sp] == ref[prefix + 'stoich_pair_index'].tolist()

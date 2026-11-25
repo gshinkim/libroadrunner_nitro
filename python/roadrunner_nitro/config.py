@@ -23,17 +23,104 @@ class Logger(object):
             logging.getLogger('roadrunner_nitro').log(max(10, 60 - 10 * level), msg)
 
 
+# libroadrunner 2.11's Config keys, numbered as libroadrunner numbers them, with its default values.
+_KEYS = [
+    ('LOADSBMLOPTIONS_CONSERVED_MOIETIES', False), ('LOADSBMLOPTIONS_RECOMPILE', False),
+    ('LOADSBMLOPTIONS_READ_ONLY', False), ('LOADSBMLOPTIONS_MUTABLE_INITIAL_CONDITIONS', True),
+    ('LOADSBMLOPTIONS_OPTIMIZE_GVN', False), ('LOADSBMLOPTIONS_OPTIMIZE_CFG_SIMPLIFICATION', False),
+    ('LOADSBMLOPTIONS_OPTIMIZE_INSTRUCTION_COMBINING', False), ('LOADSBMLOPTIONS_OPTIMIZE_DEAD_INST_ELIMINATION', False),
+    ('LOADSBMLOPTIONS_OPTIMIZE_DEAD_CODE_ELIMINATION', False), ('LOADSBMLOPTIONS_OPTIMIZE_INSTRUCTION_SIMPLIFIER', False),
+    ('LOADSBMLOPTIONS_USE_MCJIT', False), ('SIMULATEOPTIONS_STEPS', 50), ('SIMULATEOPTIONS_DURATION', 5.0),
+    ('SIMULATEOPTIONS_ABSOLUTE', 1e-10), ('SIMULATEOPTIONS_RELATIVE', 1e-05), ('SIMULATEOPTIONS_STRUCTURED_RESULT', False),
+    ('SIMULATEOPTIONS_STIFF', True), ('SIMULATEOPTIONS_MULTI_STEP', False),
+    ('SIMULATEOPTIONS_DETERMINISTIC_VARIABLE_STEP', False), ('SIMULATEOPTIONS_STOCHASTIC_VARIABLE_STEP', True),
+    ('SIMULATEOPTIONS_INTEGRATOR', 'CVODE'), ('SIMULATEOPTIONS_INITIAL_TIMESTEP', -1),
+    ('SIMULATEOPTIONS_MINIMUM_TIMESTEP', -1), ('SIMULATEOPTIONS_MAXIMUM_TIMESTEP', -1),
+    ('SIMULATEOPTIONS_MAXIMUM_NUM_STEPS', -1), ('ROADRUNNER_DISABLE_WARNINGS', False),
+    ('ROADRUNNER_DISABLE_PYTHON_DYNAMIC_PROPERTIES', False), ('SBML_APPLICABLEVALIDATORS', 111),
+    ('ROADRUNNER_JACOBIAN_STEP_SIZE', 1e-05), ('MODEL_RESET', 41), ('CVODE_MIN_ABSOLUTE', 1e-12),
+    ('CVODE_MIN_RELATIVE', 1e-06), ('SIMULATEOPTIONS_COPY_RESULT', True), ('STEADYSTATE_PRESIMULATION', False),
+    ('STEADYSTATE_PRESIMULATION_MAX_STEPS', 100), ('STEADYSTATE_PRESIMULATION_TIME', 100.0),
+    ('STEADYSTATE_APPROX', False), ('STEADYSTATE_APPROX_TOL', 1e-06), ('STEADYSTATE_APPROX_MAX_STEPS', 10000),
+    ('STEADYSTATE_APPROX_TIME', 10000.0), ('STEADYSTATE_RELATIVE', 1e-12), ('STEADYSTATE_MAXIMUM_NUM_STEPS', 100),
+    ('STEADYSTATE_MINIMUM_DAMPING', 1e-20), ('STEADYSTATE_BROYDEN', 0), ('STEADYSTATE_LINEARITY', 3),
+    ('ROADRUNNER_JACOBIAN_MODE', 1), ('TEMP_DIR_PATH', '.'), ('LOGGER_LOG_FILE_PATH', ''), ('RANDOM_SEED', -1),
+    ('PYTHON_ENABLE_NAMED_MATRIX', True), ('LLVM_SYMBOL_CACHE', True), ('OPTIMIZE_REACTION_RATE_SELECTION', True),
+    ('LOADSBMLOPTIONS_PERMISSIVE', True), ('MAX_OUTPUT_ROWS', 100000), ('ALLOW_EVENTS_IN_STEADY_STATE_CALCULATIONS', False),
+    ('MAX_EVENT_CASCADE', 10000), ('VALIDATION_IN_REGENERATION', True), ('K_ROWS_PER_WRITE', 1000),
+    ('LLVM_BACKEND', 0), ('LLJIT_OPTIMIZATION_LEVEL', 0), ('LLJIT_NUM_THREADS', 1),
+    ('METABOLIC_CONTROL_ANALYSIS_FLUX_THRESHOLD', 1e-09), ('METABOLIC_CONTROL_ANALYSIS_DIFFERENTIAL_STEP_SIZE', 0.02),
+    ('METABOLIC_CONTROL_ANALYSIS_STEADY_STATE_THRESHOLD', 0.01),
+]
+
+
 class Config(object):
-    """libroadrunner's Config: setValue/getValue on a key; the Rust engine reads none of them."""
-    _values = {}
+    """libroadrunner's Config: settings by key (``Config.setValue(Config.MAX_OUTPUT_ROWS, 10**6)``).
+
+    All of libroadrunner's keys exist with its defaults. The engine has no LLVM, so the LLVM and
+    LOADSBMLOPTIONS_OPTIMIZE_* keys are kept and reported back but have no effect."""
+    CONFIG_END = len(_KEYS)
+    # values of libroadrunner's enumerations that live on Config
+    ROADRUNNER_JACOBIAN_MODE_AMOUNTS, ROADRUNNER_JACOBIAN_MODE_CONCENTRATIONS = 0, 1
+    ROADRUNNER_DISABLE_WARNINGS_STEADYSTATE, ROADRUNNER_DISABLE_WARNINGS_CONSERVED_MOIETY = 1, 2
+    MCJIT, LLJIT = 0, 1
+    NONE, LESS, DEFAULT, AGGRESSIVE = 0, 1, 2, 3
+    _values = {i: v for i, (_, v) in enumerate(_KEYS)}
+    _path = ''
+
+    @classmethod
+    def _key(cls, key):
+        if isinstance(key, str):
+            key = cls.stringToKey(key)
+        if not isinstance(key, int) or not 0 <= key < cls.CONFIG_END:
+            raise ValueError('invalid Config key: %r' % (key,))
+        return key
 
     @classmethod
     def setValue(cls, key, value):
-        cls._values[key] = value
+        cls._values[cls._key(key)] = value
 
     @classmethod
     def getValue(cls, key):
-        return cls._values.get(key)
+        return cls._values[cls._key(key)]
+
+    @classmethod
+    def getKeyList(cls):
+        return [n for n, _ in _KEYS]
+
+    @classmethod
+    def stringToKey(cls, name):
+        try:
+            return [n for n, _ in _KEYS].index(name)
+        except ValueError:
+            raise ValueError('no Config key named %r' % (name,))
+
+    @classmethod
+    def getConfigFilePath(cls):
+        return cls._path
+
+    @classmethod
+    def readConfigFile(cls, path):
+        """Read ``KEY: value`` lines (libroadrunner's format) into the settings."""
+        with open(path, encoding='utf-8') as f:
+            for line in f:
+                line = line.split('#', 1)[0].strip()
+                if ':' not in line:
+                    continue
+                name, value = (s.strip() for s in line.split(':', 1))
+                old = cls.getValue(name)
+                cls.setValue(name, value.lower() in ('true', '1') if isinstance(old, bool) else type(old)(value))
+        cls._path = path
+
+    @classmethod
+    def writeConfigFile(cls, path):
+        with open(path, 'w', encoding='utf-8') as f:
+            for i, (name, _) in enumerate(_KEYS):
+                f.write('%s: %s\n' % (name, cls._values[i]))
+
+
+for _i, (_name, _) in enumerate(_KEYS):
+    setattr(Config, _name, _i)
 
 
 class SelectionRecord(object):

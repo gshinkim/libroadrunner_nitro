@@ -31,6 +31,7 @@ def snapshot(r):
 
 def simulate(r, ids):
     selections = ["time", *[name for group in ids for name in group]]
+    r.setSeed(1)  # the same random event order in both models (RandomEventExecution cases)
     return np.asarray(r.simulate(0, 0.01, 3, selections=selections))
 
 

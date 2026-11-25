@@ -34,7 +34,24 @@ class ExecutableModel(object):
         self._r.setValue(key, value)
 
     def keys(self):
-        return [s for _, l in self._r._rr.getAvailableTimeCourseSymbols() for s in l]
+        """Every selection model[...] accepts, in libroadrunner's order."""
+        return self._r.keys()
+
+    def getAllTimeCourseComponentIds(self):
+        """time, floating species amounts and concentrations, parameters, compartments, reactions."""
+        rr = self._r._rr
+        fs = rr.getFloatingSpeciesIds()
+        return ['time'] + list(fs) + ['[%s]' % s for s in fs] + list(rr.getGlobalParameterIds()) + \
+            list(rr.getCompartmentIds()) + list(rr.getReactionIds())
+
+    def getExecutableModelDesc(self):
+        return 'roadrunner_nitro model (Rust engine, Cranelift JIT): %s' % self.getModelName()
+
+    def getFlags(self):
+        return 0
+
+    def getRandomSeed(self):
+        return self._r.getSeed()
 
     def values(self):
         return [self[k] for k in self.keys()]
@@ -163,7 +180,7 @@ class ExecutableModel(object):
         return self._r._rr.getInitStoichiometry(*args)
 
     def getStoichiometryIds(self):
-        return self._r._rr.getStoichiometryIds()
+        return tuple(self._r._rr.getStoichiometryIds())
 
     def getStoichiometryId(self, index):
         return self._r._rr.getStoichiometryId(index)
@@ -221,8 +238,7 @@ for _ids, _get, _put in (
         _f.__name__ = _n
         setattr(ExecutableModel, _n, _f)
 ExecutableModel.getStateVectorRate = ExecutableModel.getFloatingSpeciesAmountRates
-ExecutableModel.getRateRuleSymbols = ExecutableModel.getRateRuleIds
-ExecutableModel.getAllTimeCourseComponentIds = ExecutableModel.keys
+ExecutableModel.getRateRuleSymbols = lambda self: tuple(self.getRateRuleIds())
 ExecutableModel.getValue = ExecutableModel.__getitem__
 ExecutableModel.setValue = ExecutableModel.__setitem__
 ExecutableModel.iterkeys, ExecutableModel.itervalues, ExecutableModel.iteritems = \

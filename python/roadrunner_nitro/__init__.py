@@ -11,7 +11,13 @@ from .config import Config, Logger, SelectionRecord
 from .model import ExecutableModel
 from .named_array import NamedArray
 from .roadrunner import RoadRunner
-from .solvers import INTEGRATORS, STEADY_STATE_SOLVERS, Integrator, SensitivitySolver, Solver, SteadyStateSolver
+from .options import (BasicDictionary, Dictionary, IntegratorException, LoadSBMLOptions, RoadRunnerMap,
+                      RoadRunnerOptions, SimulateOptions, plotTimeSeriesSens)
+from .solvers import (INTEGRATORS, STEADY_STATE_SOLVERS, BasicNewtonIteration, CVODEIntegrator, EulerIntegrator,
+                      GillespieIntegrator, Integrator, KinsolSteadyStateSolver, LinesearchNewtonIteration,
+                      NewtonIteration, NLEQ1Solver, NLEQ2Solver, NLEQSolver, RK4Integrator, RK45Integrator,
+                      ForwardSensitivitySolver, SensitivitySolver, Solver, SteadyStateSensitivitySolver,
+                      SteadyStateSolver, TimeSeriesSensitivitySolver)
 
 # The engine's helpers that do not clash with libroadrunner's names stay at the top level.
 from .core import (Model, RateDerivatives, Session, antimony_to_sbml, eigenvalues, flatten_comp,  # noqa: F401

@@ -456,6 +456,7 @@ pub struct RoadRunner {
     integ: Solver,
     integs: Vec<Solver>, // settings of the integrators not current
     ss: Solver,
+    sss: Vec<Solver>, // settings of the steady-state solvers not current (kept across switches, as libroadrunner)
     seed_ctr: (u64, u64),
     step_rng: Option<(u64, crate::rand::Mt19937)>,
     result: Option<Matrix>,
@@ -468,7 +469,9 @@ impl RoadRunner {
         RoadRunner { sbml: String::new(), base: None, c: None, start: 0.0, end: 5.0, points: 51, times: None, sel: vec![], ssel: vec![],
                      cma: false, diff_step: 0.02, flux_threshold: 1e-9, steady_state_threshold: 0.01, integ: Solver::integrator("cvode").unwrap(),
                      integs: INTEGRATORS[1..].iter().map(|n| Solver::integrator(n).unwrap()).collect(),
-                     ss: Solver::steady_state("nleq2").unwrap(), seed_ctr: (u64::MAX, 0), step_rng: None, result: None }
+                     ss: Solver::steady_state("nleq2").unwrap(),
+                     sss: STEADY_STATE_SOLVERS.iter().filter(|n| **n != "nleq2").map(|n| Solver::steady_state(n).unwrap()).collect(),
+                     seed_ctr: (u64::MAX, 0), step_rng: None, result: None }
     }
 
     fn core(&self) -> Result<&Core, String> { self.c.as_ref().ok_or_else(|| "no model loaded".to_string()) }
@@ -534,7 +537,19 @@ impl RoadRunner {
         c.touch();
         self.c = Some(c);
         if self.cma { self.c.as_mut().unwrap().csum = self.csum_now()?; }
+        self.reseed_model();
         Ok(())
+    }
+
+    /// Seed the model's random streams (event tie-breaks, and through them SBML distrib draws) from the
+    /// current seed: the clock-based default or setSeed's, so separate processes draw differently and a
+    /// given seed reproduces (as libroadrunner's RANDOM_SEED / setSeed).
+    fn reseed_model(&mut self) {
+        let seed = self.seed();
+        if let Some(c) = self.c.as_mut() {
+            c.m.reseed(&mut c.w, seed);
+            c.m.reseed(&mut c.q, seed);
+        }
     }
 
     pub fn is_model_loaded(&self) -> bool { self.c.is_some() }
@@ -942,8 +957,12 @@ impl RoadRunner {
             if c.info.ia.iter().any(|(n, _)| n == k) { return Err(format!("cannot set '{k}': it has an initial assignment")); }
             // species amounts stay, concentrations change (as roadrunner); the volume is baked in: recompile
             let old = c.x[j];
-            for s in c.fids().to_vec() {
-                if c.comp_of(&s) == k { if let Some(&q) = c.kpos.get(&s) { c.x[q] *= old / v; } }
+            // floating and boundary species held as concentrations (boundary species held as amounts keep them)
+            let species: Vec<String> = c.fids().iter().chain(c.info.ids[1].iter()).cloned().collect();
+            for s in species {
+                if c.comp_of(&s) == k && !c.info.amount_params.contains(&s) {
+                    if let Some(&q) = c.kpos.get(&s) { c.x[q] *= old / v; }
+                }
             }
             c.x[j] = v;
             let c = self.c.take();
@@ -1094,9 +1113,11 @@ impl RoadRunner {
     pub fn steady_state_solver(&self) -> &Solver { &self.ss }
     pub fn steady_state_solver_mut(&mut self) -> &mut Solver { &mut self.ss }
     pub fn set_steady_state_solver(&mut self, name: &str) -> Result<(), String> {
-        if name != self.ss.name {
-            self.ss = Solver::steady_state(name).ok_or_else(|| format!("no steady-state solver '{name}' (one of {STEADY_STATE_SOLVERS:?})"))?;
-        }
+        if name == self.ss.name { return Ok(()); }
+        let i = self.sss.iter().position(|s| s.name == name)
+            .ok_or_else(|| format!("no steady-state solver '{name}' (one of {STEADY_STATE_SOLVERS:?})"))?;
+        let new = self.sss.remove(i);
+        self.sss.push(std::mem::replace(&mut self.ss, new));
         Ok(())
     }
 
@@ -1166,6 +1187,7 @@ impl RoadRunner {
         self.integrator_named("gillespie").unwrap().set("seed", Value::UInt(seed))?;
         self.step_rng = None;
         self.seed_ctr = (seed, 0); // a seed set again restarts its stream (roadrunner re-seeds)
+        self.reseed_model();
         Ok(())
     }
 

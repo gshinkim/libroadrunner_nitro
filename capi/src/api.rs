@@ -1378,15 +1378,15 @@ pub unsafe extern "C" fn getCC(handle: RRHandle, variable: *const c_char, parame
     wm(handle, false, |rr| out(value, rr.get_cc(&st(variable)?, &st(parameter)?)?))
 }
 
-/// At steady state (upstream's default).
+/// At the current state: elasticities are not a steady-state property (libroadrunner evaluates them there too).
 #[no_mangle]
 pub unsafe extern "C" fn getEE(handle: RRHandle, name: *const c_char, species: *const c_char, value: *mut f64) -> bool {
-    wm(handle, false, |rr| out(value, rr.get_ee(&st(name)?, &st(species)?, true)?))
+    wm(handle, false, |rr| out(value, rr.get_ee(&st(name)?, &st(species)?, false)?))
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn getuEE(handle: RRHandle, name: *const c_char, species: *const c_char, value: *mut f64) -> bool {
-    wm(handle, false, |rr| out(value, rr.get_uee(&st(name)?, &st(species)?, true)?))
+    wm(handle, false, |rr| out(value, rr.get_uee(&st(name)?, &st(species)?, false)?))
 }
 
 #[no_mangle]

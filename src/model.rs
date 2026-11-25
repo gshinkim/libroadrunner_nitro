@@ -1640,6 +1640,9 @@ impl Model {
     fn push_row(&self, w: &mut Work, t: f64, outs: &[u32]) -> bool {
         let Work { hist, ra, s, rows: (ts, ys), ctl, .. } = w;
         if !ctl.var { return true; }
+        // output times strictly increase (as libroadrunner's): the row after an event, located at the
+        // same time as the row before it, is taken the smallest step later
+        let t = match ts.last() { Some(&last) if t <= last => last.next_up(), _ => t };
         ts.push(t);
         let n = ys.len();
         ys.resize(n + outs.len(), 0.0);
