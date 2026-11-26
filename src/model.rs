@@ -1376,16 +1376,24 @@ impl Model {
         self.rates_at(hist, rr, v, s, t);
         self.rhs(v, f0);
         let scale = t.abs().max(1.0);
-        let mut d = 16.0 * f64::EPSILON * scale;
-        while d <= 1e-9 * scale {
+        let mut flips = |d: f64, yn: &mut [f64]| {
             for ((y, &x), &f) in yn.iter_mut().zip(s.iter()).zip(f0.iter()) { *y = x + d * f; }
-            if yn.iter().all(|x| x.is_finite()) && self.changed(hist, ra, prev, prevc, yn, t + d) {
-                s.copy_from_slice(yn);
-                return Some(t + d);
-            }
-            d *= 2.0;
+            yn.iter().all(|x| x.is_finite()) && self.changed(hist, ra, prev, prevc, yn, t + d)
+        };
+        let (mut lo, mut hi) = (0.0, 16.0 * f64::EPSILON * scale);
+        while !flips(hi, yn) { // double until the switch is bracketed
+            lo = hi;
+            hi *= 2.0;
+            if hi > 1e-9 * scale { return None; }
         }
-        None
+        // then just past it: beyond the switch the Euler step follows the old branch, so overshoot costs accuracy
+        while hi - lo > 4.0 * f64::EPSILON * scale {
+            let mid = 0.5 * (lo + hi);
+            if flips(mid, yn) { hi = mid } else { lo = mid }
+        }
+        flips(hi, yn);
+        s.copy_from_slice(yn);
+        Some(t + hi)
     }
 
     /// Earliest trigger change inside the last step (ta, tb]: bisection on the active solver's dense output
