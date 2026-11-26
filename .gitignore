@@ -3,3 +3,5 @@ __pycache__/
 SBMLTestSuite/
 tests/models/sbml-test-suite/
 benchmarks/sbml_test_suite_*.json
+tests/models/biomodels/
+benchmarks/biomodels_compare.json

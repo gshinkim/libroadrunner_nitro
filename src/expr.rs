@@ -591,6 +591,9 @@ impl Tape {
         }
     }
 
+    /// Interpret the tape once, never compiling it (for benchmarks; `run` is what the engine uses).
+    pub(crate) fn interpret(&self, regs: &mut [f64]) { Self::exec(&self.ins, regs, self.nregs) }
+
     #[inline]
     fn exec(ins: &[(u32, Op)], regs: &mut [f64], nregs: usize) {
         assert!(regs.len() >= nregs);

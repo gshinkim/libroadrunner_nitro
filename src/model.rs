@@ -922,9 +922,12 @@ impl Model {
                 // NLEQ2's rank strategy: the minimum-norm least-squares step
                 jr.fill(0.0);
                 for &(d, e, c) in &self.jred { jr[d as usize] += c * ev[e as usize]; }
+                if !jr.iter().all(|x| x.is_finite()) { return false; }
                 let j = nalgebra::DMatrix::from_row_slice(ni, ni, jr);
                 let eps = 1e-12 * inf_norm(jr).max(f64::MIN_POSITIVE);
-                let Ok(st) = j.svd(true, true).solve(&nalgebra::DVector::from_column_slice(dx), eps) else { return false };
+                // a bounded SVD: nalgebra's svd() iterates until it converges, which on some Jacobians is never
+                let Some(svd) = j.try_svd(true, true, f64::EPSILON, 1000) else { return false };
+                let Ok(st) = svd.solve(&nalgebra::DVector::from_column_slice(dx), eps) else { return false };
                 dx.copy_from_slice(st.as_slice());
             } else {
                 return false;
@@ -2292,4 +2295,6 @@ mod tests {
 impl Model {
     /// Tape computing the rate vector v (outs, nv) from registers [state | params | time].
     pub fn rates_tape(&self) -> &Tape { &self.rates }
+    /// Tape computing the rates and every nonzero Jacobian entry (the solvers' main tape; for benchmarks).
+    pub(crate) fn full_tape(&self) -> &Tape { &self.full }
 }

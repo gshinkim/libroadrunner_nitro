@@ -8,3 +8,5 @@ mod py;
 pub mod rand;
 pub mod rr;
 pub mod sbml;
+#[cfg(test)]
+mod tape_bench;
