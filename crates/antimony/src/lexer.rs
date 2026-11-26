@@ -275,7 +275,7 @@ impl Keyword {
             "formula" => Formula,
             "reaction" => Reaction,
             "substanceOnly" => SubstanceOnly,
-            "const" => Const,
+            "const" | "ext" => Const, // `ext` is libantimony's synonym for `const` (ext S1; = $S1)
             "var" => Var,
             "unit" => Unit,
             "has" => Has,
