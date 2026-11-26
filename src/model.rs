@@ -119,7 +119,7 @@ pub struct Model {
     alg: Vec<bool>,       // per state: algebraic (mass 0)
     dly: Vec<(u32, u32, u32, u32)>, // per delay: (parameter index, tau, expr, expr-before-start registers) in dtape
     events: Vec<Event>,
-    comps: Vec<u32>, // aux registers of the comparisons inside triggers: a step is cut where any flips
+    comps: Vec<u32>, // aux registers of the comparisons inside triggers and rate laws: a step is cut where any flips
     tbreak: Vec<u32>, // aux registers of time breakpoints in rate laws (`piecewise(x, time > t1, 0)`): steps stop there
     eq_trig: bool,   // a trigger tests equality (`time == 20`): steps also stop at output times, as libroadrunner's
     col: Vec<Vec<(u32, f64)>>, // per reaction: (species, N_ij), for SSA
@@ -655,7 +655,10 @@ impl Model {
         // every comparison inside a trigger is watched on its own (as CVODE root functions): a step
         // can cross a whole window (t >= a && t <= b) with the trigger false at both ends
         let mut cmp = vec![];
-        let mut stack: Vec<u32> = evs.iter().map(|e: &Event| aroots[e.trig as usize]).collect();
+        // So is every comparison inside a rate law (`piecewise(x, LECs + Capillaries < L, y)`), as libroadrunner's
+        // piecewise triggers: the step stops at the switch and the integrator restarts there. A step across the
+        // switch carries a jump h * df that the error test cannot pass when the state it feeds is near 0
+        let mut stack: Vec<u32> = evs.iter().map(|e: &Event| aroots[e.trig as usize]).chain(roots.iter().copied()).collect();
         let mut seen = std::collections::HashSet::new();
         while let Some(nd) = stack.pop() {
             if !seen.insert(nd) { continue; }
@@ -1364,6 +1367,27 @@ impl Model {
             || self.comps.iter().zip(prevc).any(|(&r, &p)| (ra[r as usize] != 0.0) != p)
     }
 
+    /// At a point where the integrator stalls: if a watched comparison or event trigger flips within a tiny Euler
+    /// step along the current derivative (up to 1e-9 relative in time), take that step (the state crosses the
+    /// switch) and return its end time.
+    fn cross_switch(&self, w: &mut Work, t: f64) -> Option<f64> {
+        if self.comps.is_empty() && self.events.is_empty() { return None; }
+        let Work { rr, v, s, f0, yn, ra, prev, prevc, hist, .. } = w;
+        self.rates_at(hist, rr, v, s, t);
+        self.rhs(v, f0);
+        let scale = t.abs().max(1.0);
+        let mut d = 16.0 * f64::EPSILON * scale;
+        while d <= 1e-9 * scale {
+            for ((y, &x), &f) in yn.iter_mut().zip(s.iter()).zip(f0.iter()) { *y = x + d * f; }
+            if yn.iter().all(|x| x.is_finite()) && self.changed(hist, ra, prev, prevc, yn, t + d) {
+                s.copy_from_slice(yn);
+                return Some(t + d);
+            }
+            d *= 2.0;
+        }
+        None
+    }
+
     /// Earliest trigger change inside the last step (ta, tb]: bisection on the active solver's dense output
     /// to ~1e-12 relative in time. Returns the first time at which a trigger has changed.
     fn locate(&self, w: &mut Work, ta: f64, tb: f64, bdf: bool) -> f64 {
@@ -1628,7 +1652,7 @@ impl Model {
         w.rows.1.clear();
         if self.alg.contains(&true) { return self.simulate_dae(w, times, rtol, atol, outs, out, step_out.map(|(t, _)| t)); }
         let (no, nt) = (outs.len(), times.len());
-        let ev = self.has_events();
+        let ev = self.has_events() || !self.comps.is_empty(); // events, or switches in rate laws to stop at
         let tend = times[nt - 1];
         let mut t = times[0];
         // Prefer the one-step method in nonstiff mode. The stiff default uses BDF at tight
@@ -1636,6 +1660,7 @@ impl Model {
         let mut bdf = !w.ctl.nonstiff && (rtol < BDF_BELOW_RTOL || (1..BDF_MAX).contains(&w.ctl.max_order));
         let dl = !self.dly.is_empty(); // delay(): one-step Rodas4, steps no longer than the shortest delay
         if dl { bdf = false; }
+        let bdf0 = bdf;
         let mut h = step_out.as_ref().map_or(0.0, |(_, h)| **h);
         if h == 0.0 { w.bdf.order = 0; }
         if ev {
@@ -1681,7 +1706,21 @@ impl Model {
                 w.stats[3] += 1;
                 step = self.step(w, t, t1, &mut h, rtol, atol);
             }
-            let Some(tn) = step else { return false };
+            let Some(tn) = step else {
+                // stalled just short of a switch: every trial step across it was rejected (its jump h * df fails the
+                // error test when the state it feeds is near 0, and switches are only checked after accepted steps).
+                // Cross with an Euler step of a few ulps to just past the switch, then restart there
+                let Some(tx) = self.cross_switch(w, t) else { return false };
+                t = tx;
+                bdf = bdf0;
+                w.bdf.order = 0;
+                h = 0.0;
+                n = 0;
+                if ev && self.events_at(w, t).is_none() { return false; }
+                self.hist_push(w, t);
+                if !self.push_row(w, t, outs) { return true; }
+                continue;
+            };
             let mut te = tn;
             if ev {
                 let Work { ra, s, prev, prevc, hist, .. } = w;
