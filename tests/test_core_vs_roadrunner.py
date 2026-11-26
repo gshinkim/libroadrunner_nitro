@@ -700,7 +700,9 @@ def test_big_model_load_defers_structural_analysis():
     sbml = rn.antimony_to_sbml(src)
     t = time.perf_counter()
     r = rn.core.RoadRunner(sbml)
-    assert time.perf_counter() - t < 0.74  # libstruct's QR runs on the first structural query
+    # libstruct's QR runs on the first structural query, not at load: load ~0.6 s, the QR ~28 s (Windows, 2026);
+    # the bound leaves room for slow shared CI machines while still failing if the QR moves into load
+    assert time.perf_counter() - t < 5.0
     assert len(r.getIndependentFloatingSpeciesIds()) + len(r.getDependentFloatingSpeciesIds()) == len(r.getFloatingSpeciesIds())
 
 
