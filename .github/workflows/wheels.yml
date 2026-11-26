@@ -105,11 +105,15 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+      - name: Release description (what it is, a pip install command per platform)
+        run: python3 .github/release_notes.py "${{ github.repository }}" "${{ github.ref_name }}" dist > notes.md
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          body_path: notes.md
           prerelease: ${{ contains(github.ref_name, 'rc') }}
