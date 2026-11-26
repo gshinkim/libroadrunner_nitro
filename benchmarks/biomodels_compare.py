@@ -6,6 +6,9 @@ events, unbounded growth), so steady-state checks would measure solver convergen
     python benchmarks/biomodels_compare.py      # all models; results in benchmarks/biomodels_compare.json
     python benchmarks/biomodels_compare.py --models BIOMD0000000001 BIOMD0000000012
 
+Load, time course and Jacobian are timed separately for every model (after an untimed warm-up in each worker
+process, so one-off start-up costs are not charged to a model); timeouts and crashes are counted, not timed.
+
 Each engine runs in worker processes, a batch of models each; a model that crashes or hangs a worker is retried
 alone and reported as 'crash'. Matrices are matched by row and column names, so an ordering difference alone is
 not a disagreement. Each check gets a verdict per model: agree, disagree, nitro-only (libroadrunner failed),
@@ -13,10 +16,12 @@ lr-only (roadrunner_nitro failed) or both-fail. Disagreements need triage: which
 here.
 """
 import argparse
+import concurrent.futures
 import json
 import os
 import subprocess
 import sys
+import time
 from collections import Counter
 
 import numpy as np
@@ -24,7 +29,10 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODELS = os.path.join(HERE, '..', 'tests', 'models', 'biomodels')
 RESULTS = os.path.join(HERE, 'biomodels_compare.json')
+RAW = os.path.join(HERE, 'biomodels_raw_%s.json')
+WARMUP = os.path.join(HERE, '..', 'tests', 'models', 'sosbench', 'repressilator', 'repressilator-sbml-l2v1.xml')  # each engine's raw output, saved before comparing
 BATCH = 20
+JOBS = 8  # worker processes at once (libroadrunner uses one core per process)
 T_END, POINTS = 100.0, 101
 RTOL, ATOL = 1e-8, 1e-12
 CMP_RTOL, CMP_ATOL = 1e-5, 1e-8  # relative; absolute as a fraction of the column's largest value
@@ -40,23 +48,30 @@ def run_model(engine, path):
         import roadrunner_nitro as rr
     else:
         import roadrunner as rr
-    out = {}
+    out, times = {}, {}
     try:
+        t0 = time.perf_counter()
         r = rr.RoadRunner(path)
+        times['load'] = time.perf_counter() - t0
     except Exception as e:
         return {'load': 'error: %s' % str(e)[:200]}
-    out['load'] = 'ok'
+    out['load'], out['time'] = 'ok', times
     try:
         r.integrator.relative_tolerance = RTOL
         r.integrator.absolute_tolerance = ATOL
         sel = ['time'] + ['[%s]' % s for s in r.model.getFloatingSpeciesIds()]
-        y = np.asarray(r.simulate(0, T_END, POINTS, sel), dtype=float)
+        t0 = time.perf_counter()
+        y = r.simulate(0, T_END, POINTS, sel)
+        times['tc'] = time.perf_counter() - t0
+        y = np.asarray(y, dtype=float)
         out['tc'] = dict(cols=sel, data=y.tolist())
     except Exception as e:
         out['tc'] = 'error: %s' % str(e)[:200]
     try:
         r.resetAll()  # the Jacobian at the initial state: exact rate-law derivatives, no steady state needed
+        t0 = time.perf_counter()
         m = r.getFullJacobian()
+        times['jac'] = time.perf_counter() - t0
         out['jac'] = dict(rows=list(m.rownames), cols=list(m.colnames), data=np.asarray(m, dtype=float).tolist())
     except Exception as e:
         out['jac'] = 'error: %s' % str(e)[:200]
@@ -66,6 +81,11 @@ def run_model(engine, path):
 def worker(engine, paths):
     import warnings
     warnings.filterwarnings('ignore')
+    if os.path.exists(WARMUP):  # one-off start-up costs (LLVM / Cranelift initialization) outside the timings
+        try:
+            run_model(engine, WARMUP)
+        except Exception:
+            pass
     for p in paths:
         print(json.dumps({'model': os.path.basename(p), 'out': run_model(engine, p)}), flush=True)
 
@@ -104,6 +124,11 @@ def close(a, b):
         tuple(int(x) for x in i), float(a[i]), float(b[i]), int((~ok).sum()), ok.size)
 
 
+def shape_ok(m):
+    """Whether a matrix's data matches its row and column names."""
+    return np.asarray(m['data'], dtype=float).size == len(m['rows']) * len(m['cols'])
+
+
 def by_name(m, rows, cols):
     """Matrix m reordered to rows x cols by name (None if the names differ)."""
     if sorted(m['rows']) != sorted(rows) or sorted(m['cols']) != sorted(cols):
@@ -134,6 +159,10 @@ def compare(n, l):
                 b = dict(cols=a['cols'], data=np.asarray(b['data'])[:, bi].tolist())
             ok, why = close(a['data'], b['data'])
         else:
+            bad = [e for e, m in (('nitro', a), ('libroadrunner', b)) if not shape_ok(m)]
+            if bad:
+                v[key] = 'disagree: %s returned a matrix whose data does not match its row and column names' % bad[0]
+                continue
             bm = by_name(b, a['rows'], a['cols'])
             if bm is None:
                 v[key] = 'disagree: row or column names differ'
@@ -148,6 +177,8 @@ def main():
     ap.add_argument('--models', nargs='*')
     ap.add_argument('--timeout', type=float, default=120.0, help='seconds per model')
     ap.add_argument('--worker', nargs='+')
+    ap.add_argument('--reuse', action='store_true', help='compare the saved raw results instead of simulating')
+    ap.add_argument('--jobs', type=int, default=JOBS, help='worker processes at once')
     a = ap.parse_args()
     if a.worker:
         return worker(a.worker[0], a.worker[1:])
@@ -155,19 +186,52 @@ def main():
     paths = [os.path.join(MODELS, m + '.xml') for m in names]
     raw = {}
     for engine in ('nitro', 'libroadrunner'):
+        if a.reuse and os.path.exists(RAW % engine):
+            with open(RAW % engine, encoding='utf-8') as f:
+                raw[engine] = json.load(f)
+            print('  %s: reusing %s' % (engine, RAW % engine))
+            continue
         raw[engine] = {}
-        for k in range(0, len(paths), BATCH):
-            raw[engine].update(run_batch(engine, paths[k:k + BATCH], a.timeout))
-            print('  %s: %d / %d' % (engine, len(raw[engine]), len(paths)), end='\r', flush=True)
-        print()
-    verdicts = {m: compare(raw['nitro'][m + '.xml'], raw['libroadrunner'][m + '.xml']) for m in names}
+        batches = [paths[k:k + BATCH] for k in range(0, len(paths), BATCH)]
+        with concurrent.futures.ThreadPoolExecutor(a.jobs) as pool:
+            for got in pool.map(lambda b: run_batch(engine, b, a.timeout), batches):
+                raw[engine].update(got)
+                print('  %s: %d / %d' % (engine, len(raw[engine]), len(paths)), flush=True)
+        with open(RAW % engine, 'w', encoding='utf-8') as f:  # saved before any comparison
+            json.dump(raw[engine], f)
+    verdicts = {}
+    for m in names:
+        try:
+            verdicts[m] = compare(raw['nitro'][m + '.xml'], raw['libroadrunner'][m + '.xml'])
+        except Exception as e:  # a comparison bug costs one model's verdict, never the run
+            verdicts[m] = {'load': 'compare-error: %s: %s' % (type(e).__name__, str(e)[:150])}
     with open(RESULTS, 'w', encoding='utf-8') as f:
-        json.dump({'verdicts': verdicts, 'errors': {m: {e: {k: v for k, v in raw[e][m + '.xml'].items() if isinstance(v, str)}
+        json.dump({'verdicts': verdicts,
+                   'times': {m: {e: raw[e][m + '.xml'].get('time') for e in raw} for m in names}, 'errors': {m: {e: {k: v for k, v in raw[e][m + '.xml'].items() if isinstance(v, str)}
                                                           for e in raw} for m in names}}, f, indent=1)
     print('\n%-6s %8s %9s %11s %8s %10s' % ('check', 'agree', 'disagree', 'nitro-only', 'lr-only', 'both-fail'))
     for key in ('load', 'tc', 'jac'):
         c = Counter((v.get(key) or 'n/a').split(':')[0] for v in verdicts.values())
         print('%-6s %8d %9d %11d %8d %10d' % (key, c['agree'], c['disagree'], c['nitro-only'], c['lr-only'], c['both-fail']))
+    print('\ntiming per model, milliseconds (successful steps only; %d worker processes at once on both engines):' % a.jobs)
+    print('%-6s %-14s %6s %10s %10s %12s' % ('step', 'engine', 'n', 'median', 'p90', 'total (s)'))
+    for step in ('load', 'tc', 'jac'):
+        for e in ('nitro', 'libroadrunner'):
+            t = [raw[e][m + '.xml'].get('time', {}).get(step) for m in names]
+            t = np.array([x for x in t if x is not None])
+            if len(t):
+                print('%-6s %-14s %6d %10.3f %10.3f %12.1f' % (step, e, len(t), 1e3 * np.median(t), 1e3 * np.percentile(t, 90), t.sum()))
+    print('\nper-model ratio libroadrunner / nitro (models both engines completed):')
+    for step in ('load', 'tc', 'jac'):
+        q = [raw['libroadrunner'][m + '.xml'].get('time', {}).get(step) / raw['nitro'][m + '.xml']['time'][step]
+             for m in names if raw['nitro'][m + '.xml'].get('time', {}).get(step)
+             and raw['libroadrunner'][m + '.xml'].get('time', {}).get(step) is not None]
+        if q:
+            print('  %-5s n=%4d  median %6.1fx  quartiles %.1fx - %.1fx  nitro faster in %d of %d' % (
+                step, len(q), np.median(q), np.percentile(q, 25), np.percentile(q, 75), sum(x > 1 for x in q), len(q)))
+    for e in ('nitro', 'libroadrunner'):
+        crashed = [m for m in names if raw[e][m + '.xml'].get('load', '').startswith('crash')]
+        print('%s: %d models crashed or timed out%s' % (e, len(crashed), (': ' + ', '.join(crashed[:10])) if crashed else ''))
     print('\ndisagreements (first per model):')
     for m, v in verdicts.items():
         bad = [(k, s) for k, s in v.items() if s.startswith('disagree')]
