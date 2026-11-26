@@ -127,6 +127,31 @@ libroadrunner 2.9.1. Reproduce: `python benchmarks/bench_stiff.py`, `python benc
 Against a tight-tolerance reference (rtol 1e-10), roadrunner_nitro's default-tolerance error was equal to or
 smaller than libroadrunner's on every model (Oregonator 2.5e-3 vs 4.0e-3; chain 3.4e-6 vs 6.3e-6).
 
+### Scaling with model size (random networks)
+
+Random mass-action networks (uni/bi reactions, seeded), same SBML to both engines, default tolerances,
+simulate(0, 50, 501); medians of repeats after a warm-up; Windows, libroadrunner 2.11. Reproduce:
+`python benchmarks/bench_scaling.py --plot`. Ratios are libroadrunner / roadrunner_nitro.
+
+| Species | Reactions | Load, libroadrunner | Load, nitro | Ratio | Simulate, libroadrunner | Simulate, nitro | Ratio |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 20 | 20 | 4.5 ms | 0.92 ms | 4.9x | 2.6 ms | 0.41 ms | 6.3x |
+| 20 | 100 | 23 ms | 3.4 ms | 6.9x | 2.7 ms | 0.58 ms | 4.7x |
+| 20 | 300 | 101 ms | 13 ms | 8.1x | 2.8 ms | 0.89 ms | 3.2x |
+| 20 | 800 | 505 ms | 36 ms | 14.2x | 3.6 ms | 1.6 ms | 2.2x |
+| 10 | 30 | 6.4 ms | 1.1 ms | 6.0x | 2.4 ms | 0.28 ms | 8.7x |
+| 50 | 150 | 38 ms | 5.2 ms | 7.3x | 4.9 ms | 2.2 ms | 2.3x |
+| 100 | 300 | 103 ms | 13 ms | 8.2x | 15 ms | 10 ms | 1.5x |
+| 200 | 600 | 306 ms | 42 ms | 7.2x | 44 ms | 37 ms | 1.2x |
+| 400 | 1200 | 1064 ms | 189 ms | 5.6x | 293 ms | 252 ms | 1.2x |
+
+The load advantage grows with the number of reactions (LLVM compile time). The simulation advantage is
+largest for small models and shrinks to ~1.2x at 100+ species, where the stiff solver's linear algebra rather
+than rate-law evaluation dominates: the place to look for further speed on large models. Through Tellurium
+(`te.loada`, which adds libantimony's Antimony conversion) a 200-species, 300-reaction teUtils network took
+3.1 s to load against 37 ms for roadrunner_nitro (Antimony conversion included), and 22 ms against 6.0 ms
+to simulate.
+
 ## 3. Correctness against independent references
 
 - **SBML Test Suite, semantic time courses** (commit bbcbc80), judged against the suite's expected results with

@@ -6,3 +6,5 @@ benchmarks/sbml_test_suite_*.json
 tests/models/biomodels/
 benchmarks/biomodels_compare.json
 benchmarks/biomodels_raw_*.json
+benchmarks/bench_scaling.json
+benchmarks/bench_scaling.png
