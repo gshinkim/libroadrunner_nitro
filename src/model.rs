@@ -1420,7 +1420,7 @@ impl Model {
     /// Returns None if a cascade does not terminate, else whether any event executed.
     fn events_at(&self, w: &mut Work, t: f64) -> Option<bool> {
         let nx = self.nx;
-        let Work { rr, rf, ra, s, prev, prevc, pend, tmp, hist, rng, .. } = w;
+        let Work { rr, rf, ra, s, prev, prevc, pend, tmp, hist, rng, v, f0, yn, .. } = w;
         let mut fired = false;
         for _ in 0..10_000 {
             self.aux_at(hist, ra, s, t);
@@ -1438,7 +1438,22 @@ impl Model {
             }
             let pr = |e: usize| self.events[e].prio.map_or(0.0, |r| ra[r as usize]);
             let due: Vec<usize> = (0..pend.len()).filter(|&i| pend[i].0 <= t).collect();
-            if due.is_empty() { return Some(fired) }
+            if due.is_empty() {
+                // CVODE deactivates a root function that is exactly 0 at a restart until it leaves 0. Likewise an
+                // event whose assignments leave the state on a trigger's boundary (`at V < 0: V = 0` while V' < 0)
+                // counts that trigger as still true: it must turn false, then true again, to fire. Otherwise it
+                // fires again at every step from then on, ever shorter (BIOMD0000000711)
+                if fired {
+                    self.rates_at(hist, rr, v, s, t);
+                    self.rhs(v, f0);
+                    let dt = 1e-12 * t.abs().max(1.0);
+                    for ((y, &x), &d) in yn.iter_mut().zip(s.iter()).zip(f0.iter()) { *y = x + dt * d; }
+                    self.aux_at(hist, ra, yn, t + dt);
+                    for (e, ev) in self.events.iter().enumerate() { if ra[ev.trig as usize] != 0.0 { prev[e] = true; } }
+                    self.aux_at(hist, ra, s, t); // registers back at (s, t)
+                }
+                return Some(fired);
+            }
             let top = due.iter().map(|&i| pr(pend[i].1)).fold(f64::NEG_INFINITY, f64::max);
             let tied: Vec<usize> = due.into_iter().filter(|&i| pr(pend[i].1) == top || top.is_nan()).collect();
             // equal explicit priorities: uniformly random (SBML L3); otherwise document order

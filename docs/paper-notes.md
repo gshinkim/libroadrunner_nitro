@@ -145,7 +145,7 @@ smaller than libroadrunner's on every model (Oregonator 2.5e-3 vs 4.0e-3; chain 
   (0 to 100, 101 points, rtol 1e-8, atol 1e-12) and the Jacobian at the initial state, on both engines; no steady
   states. Per-model medians: load 2.5 ms against 90 ms (38x), time course 0.59 ms against 1.3 ms (2.5x), Jacobian
   0.016 ms against 14 ms (~1000x). roadrunner_nitro never crashed or timed out; libroadrunner did on 37 models.
-  Time courses agree (relative 1e-5) on 954 models; 45 run only on roadrunner_nitro, 3 only on libroadrunner, 7
+  Time courses agree (relative 1e-5) on 955 models; 45 run only on roadrunner_nitro, 2 only on libroadrunner, 7
   on neither, and 60 disagree. COPASI 4.48 (via basico, rtol 1e-10) was the referee for the disagreements: in
   most of them both engines are within 1e-3 of COPASI, with roadrunner_nitro the closer one more often.
 - **What the referee found in roadrunner_nitro** (all fixed): (1) an infinite Jacobian entry (x^0.2 at x = 0)
@@ -156,12 +156,15 @@ smaller than libroadrunner's on every model (Oregonator 2.5e-3 vs 4.0e-3; chain 
   triggers never fired, since steps do not land on t = 20 (libroadrunner fires them because it integrates
   output time to output time; roadrunner_nitro now does the same for such models and warns at load);
   (5) short time windows in rate laws (`piecewise(x, 0.1 < time < 0.105, 0)`) were stepped over; times
-  compared with time are now breakpoints. COPASI itself steps over the infusion windows of BIOMD0000000879.
+  compared with time are now breakpoints. COPASI itself steps over the infusion windows of BIOMD0000000879;
+  (6) `at V < 0: V = 0` with V' < 0 at V = 0 (numerical noise) re-fired at every ever-shorter step: like
+  CVODE, which deactivates a root function that is exactly 0 at a restart, a trigger left on its boundary by
+  an event now counts as still true until it turns false again.
 - **Jacobians on the BioModels**: where the engines disagree, roadrunner_nitro's exact derivatives match an
   independent Richardson-extrapolated reference, including at kinks; libroadrunner's finite differences are
   off by ~1e-4 (`benchmarks/biomodels_triage_jacobian.py`).
-- Still failing in roadrunner_nitro only: BIOMD0000000711 (event, states near 1e-23) and 722, 859 at atol
-  1e-12 (they run at 1e-10; COPASI also stops early on both).
+- Still failing in roadrunner_nitro only: BIOMD0000000722 and 859 at atol 1e-12 (they run at 1e-10; COPASI
+  also stops early on both).
 
 ## 4. Caveats to state in a paper
 
