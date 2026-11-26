@@ -890,6 +890,8 @@ impl PyRR {
     fn getSupportedIdTypes(&self, road_runner: bool) -> i64 { self.r.supported_id_types(road_runner) }
 
     fn getEventIds(&self) -> Vec<String> { self.r.event_ids() }
+    /// Ids of events whose trigger tests equality (`time == 20`), for the load-time warning.
+    fn _equality_trigger_events(&self) -> Vec<String> { self.r.equality_trigger_events() }
     fn getNumEvents(&self) -> usize { self.r.num_events() }
     fn getStateVectorIds(&self) -> Vec<String> { self.r.state_vector_ids() }
     #[pyo3(signature = (time=None, y=None))]

@@ -551,6 +551,20 @@ impl RoadRunner {
         })
     }
 
+    /// Ids of events whose trigger tests equality (`time == 20`): true at one instant, so the event fires only
+    /// when an output time or a step lands exactly on it (as in libroadrunner). `time >= 20` is the robust form.
+    pub fn equality_trigger_events(&self) -> Vec<String> {
+        if !self.c.as_ref().is_some_and(|c| c.m.has_equality_trigger()) { return vec![]; } // no re-read of the SBML
+        fn has_eq(e: &E) -> bool {
+            match e { E::Op(f, a) | E::Call(f, a) => f == "eq" || a.iter().any(has_eq), _ => false }
+        }
+        self.doc().ok().and_then(|d| d.model).map_or_else(Vec::new, |m| {
+            m.events.iter().filter(|e| e.trigger.as_ref().and_then(|t| t.math.as_ref())
+                .and_then(|x| math::conv(x).ok()).is_some_and(|x| has_eq(&x)))
+                .map(|e| e.id.clone().unwrap_or_default()).collect()
+        })
+    }
+
     pub fn num_events(&self) -> usize {
         self.c.as_ref().map_or(0, |c| c.m.event_src.len())
     }

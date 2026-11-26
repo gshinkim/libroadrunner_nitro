@@ -15,7 +15,7 @@ pub enum Op {
     Time,
     Neg(N), Add(N, N), Sub(N, N), Mul(N, N), Div(N, N), Pow(N, N), PowI(N, i32),
     Exp(N), Ln(N), Log10(N), Sqrt(N), Abs(N), Sign(N), Floor(N), Ceil(N), Sin(N), Cos(N), Tan(N),
-    Asin(N), Acos(N), Atan(N), Fact(N),
+    Asin(N), Acos(N), Atan(N), Sinh(N), Cosh(N), Tanh(N), Fact(N),
     Lt(N, N), Le(N, N), Eq(N, N), Ne(N, N), And(N, N), Or(N, N), Xor(N, N), Not(N),
     Sel(N, N, N), Min(N, N), Max(N, N),
     /// distrib draw: (kind in rand::NAMES, call id so equal calls stay distinct draws, a, b, lower, upper)
@@ -45,6 +45,7 @@ fn apply(op: &Op, r: impl Fn(N) -> f64) -> f64 {
         Floor(a) => r(a).floor(), Ceil(a) => r(a).ceil(),
         Sin(a) => r(a).sin(), Cos(a) => r(a).cos(), Tan(a) => r(a).tan(),
         Asin(a) => r(a).asin(), Acos(a) => r(a).acos(), Atan(a) => r(a).atan(), Fact(a) => factorial(r(a)),
+        Sinh(a) => r(a).sinh(), Cosh(a) => r(a).cosh(), Tanh(a) => r(a).tanh(),
         Lt(a, c) => b(r(a) < r(c)), Le(a, c) => b(r(a) <= r(c)),
         Eq(a, c) => b(r(a) == r(c)), Ne(a, c) => b(r(a) != r(c)),
         And(a, c) => b(r(a) != 0.0 && r(c) != 0.0), Or(a, c) => b(r(a) != 0.0 || r(c) != 0.0),
@@ -61,7 +62,8 @@ pub(crate) fn children(op: &Op) -> [Option<N>; 4] {
     match *op {
         Const(_) | Var(_) | Par(_) | Time => [None, None, None, None],
         Neg(a) | PowI(a, _) | Exp(a) | Ln(a) | Log10(a) | Sqrt(a) | Abs(a) | Sign(a) | Floor(a)
-        | Ceil(a) | Sin(a) | Cos(a) | Tan(a) | Asin(a) | Acos(a) | Atan(a) | Fact(a) | Not(a) => [Some(a), None, None, None],
+        | Ceil(a) | Sin(a) | Cos(a) | Tan(a) | Asin(a) | Acos(a) | Atan(a) | Sinh(a) | Cosh(a) | Tanh(a) | Fact(a)
+        | Not(a) => [Some(a), None, None, None],
         Sel(a, c, d) => [Some(a), Some(c), Some(d), None],
         Rand(_, _, a, b, c, d) => [Some(a), Some(b), Some(c), Some(d)],
         Add(a, c) | Sub(a, c) | Mul(a, c) | Div(a, c) | Pow(a, c) | Lt(a, c) | Le(a, c) | Eq(a, c)
@@ -194,6 +196,12 @@ impl Dag {
             Atan(a) => {
                 let da = self.diff(a, wrt); let one = self.cst(1.0);
                 let a2 = self.mk(PowI(a, 2)); let s = self.mk(Add(one, a2)); self.mk(Div(da, s))
+            }
+            Sinh(a) => { let da = self.diff(a, wrt); let c = self.mk(Cosh(a)); self.mk(Mul(c, da)) }
+            Cosh(a) => { let da = self.diff(a, wrt); let s = self.mk(Sinh(a)); self.mk(Mul(s, da)) }
+            Tanh(a) => { // (1 - tanh^2) da: finite for every a
+                let da = self.diff(a, wrt); let one = self.cst(1.0);
+                let t2 = self.mk(PowI(n, 2)); let s = self.mk(Sub(one, t2)); self.mk(Mul(s, da))
             }
             Sel(c, x, y) => {
                 let (dx, dy) = (self.diff(x, wrt), self.diff(y, wrt)); self.mk(Sel(c, dx, dy))
@@ -386,14 +394,18 @@ impl<'a, F: FnMut(&str) -> Option<Op>> P<'a, F> {
                 need(1)?; let one = d.cst(1.0);
                 let x = d.mk(match f { "sec" => Cos(a[0]), "csc" => Sin(a[0]), _ => Tan(a[0]) }); d.mk(Div(one, x))
             }
-            "sinh" | "cosh" | "tanh" | "sech" | "csch" | "coth" => { // from e^x and e^-x
-                need(1)?; let ep = d.mk(Exp(a[0])); let na = d.mk(Neg(a[0])); let em = d.mk(Exp(na));
-                let (s, c) = (d.mk(Sub(ep, em)), d.mk(Add(ep, em)));
-                let two = d.cst(2.0);
-                match f {
-                    "sinh" => d.mk(Div(s, two)), "cosh" => d.mk(Div(c, two)), "tanh" => d.mk(Div(s, c)),
-                    "sech" => d.mk(Div(two, c)), "csch" => d.mk(Div(two, s)), _ => d.mk(Div(c, s)),
-                }
+            // libm sinh, cosh, tanh: (e^x - e^-x) / 2 loses relative precision near 0, and a ratio of e^x
+            // terms is inf / inf = NaN past |x| = 709.78; sech, csch, coth are built to stay finite there too
+            "sinh" => { need(1)?; d.mk(Sinh(a[0])) }
+            "cosh" => { need(1)?; d.mk(Cosh(a[0])) }
+            "tanh" => { need(1)?; d.mk(Tanh(a[0])) }
+            "coth" => { need(1)?; let one = d.cst(1.0); let t = d.mk(Tanh(a[0])); d.mk(Div(one, t)) }
+            "sech" | "csch" => { // sech = 2u / (1 + u^2), u = e^-|x|; csch = sech / tanh
+                need(1)?; let ab = d.mk(Abs(a[0])); let na = d.mk(Neg(ab)); let u = d.mk(Exp(na));
+                let (one, two) = (d.cst(1.0), d.cst(2.0));
+                let u2 = d.mk(PowI(u, 2)); let den = d.mk(Add(one, u2)); let num = d.mk(Mul(two, u));
+                let sech = d.mk(Div(num, den));
+                if f == "sech" { sech } else { let t = d.mk(Tanh(a[0])); d.mk(Div(sech, t)) }
             }
             "arcsec" | "arccsc" | "arccot" => { // of 1/x
                 need(1)?; let one = d.cst(1.0); let r = d.mk(Div(one, a[0]));
@@ -549,6 +561,7 @@ impl Tape {
                 Sqrt(a) => Sqrt(m(a)), Abs(a) => Abs(m(a)), Sign(a) => Sign(m(a)), Floor(a) => Floor(m(a)),
                 Ceil(a) => Ceil(m(a)), Sin(a) => Sin(m(a)), Cos(a) => Cos(m(a)), Tan(a) => Tan(m(a)),
                 Asin(a) => Asin(m(a)), Acos(a) => Acos(m(a)), Atan(a) => Atan(m(a)), Fact(a) => Fact(m(a)),
+                Sinh(a) => Sinh(m(a)), Cosh(a) => Cosh(m(a)), Tanh(a) => Tanh(m(a)),
                 Lt(a, c) => Lt(m(a), m(c)), Le(a, c) => Le(m(a), m(c)), Eq(a, c) => Eq(m(a), m(c)),
                 Ne(a, c) => Ne(m(a), m(c)), And(a, c) => And(m(a), m(c)), Or(a, c) => Or(m(a), m(c)),
                 Xor(a, c) => Xor(m(a), m(c)), Not(a) => Not(m(a)), Sel(a, c, d) => Sel(m(a), m(c), m(d)),
@@ -647,7 +660,8 @@ mod tests {
 
     #[test]
     fn jit_matches_interpreter() {
-        let fs = ["k*x*y/(1+x+y^2)", "pow(x, 2.5)*exp(-y)", "x^y", "sqrt(x)*ln(y)+log10(x*y)",
+        let fs = ["sinh(x) * cosh(y) + tanh(400*x) + sech(y) - csch(x) * coth(500*y)",
+                  "k*x*y/(1+x+y^2)", "pow(x, 2.5)*exp(-y)", "x^y", "sqrt(x)*ln(y)+log10(x*y)",
                   "abs(x-y)*sin(x)+cos(y)*tan(x/5)", "piecewise(x^2, x > y, y^3)", "min(x,y)*max(x,y)",
                   "x^-3 * (1+y)^7 + floor(x) - ceil(y) + time", "(x <= 2 && !(y == 4)) || (x != y) + xor(x > 1, y < 1)",
                   "min(x, k) + max(k, y) - abs(x - 3) * (x - y)^13", "piecewise(1, x > y, 2, x < y, 3) + exp(x)/(1+exp(y))"];
@@ -681,6 +695,16 @@ mod tests {
         assert!((v("arccoth(2)") - 0.5f64.atanh()).abs() < 1e-12);
         assert_eq!((v("5 <= 5 <= 2"), v("1 < 2 < 3"), v("3 > 2 == 2")), (0.0, 1.0, 1.0));
         assert_eq!((v("factorial(5)"), v("quotient(9, 2)"), v("rem(9, 2)"), v("plus()")), (120.0, 4.0, 1.0, 0.0));
+        // past |x| = 709.78 e^x overflows: no NaN in tanh, sech, csch, coth or their derivatives (BIOMD0000000749
+        // has ld / tanh(R / ld)); sinh, cosh keep their relative precision near 0
+        for f in ["tanh(x)", "coth(x)", "sech(x)", "csch(x)", "ld / tanh(x / 0.3)"] {
+            for x in [-1000.0, -720.0, 720.0, 1000.0] {
+                let (y, dx, _) = eval(&f.replace("ld", "0.3"), x, 0.0, 0.0);
+                assert!(y.is_finite() && dx.is_finite(), "{f} at {x}: {y} {dx}");
+            }
+        }
+        assert_eq!(eval("tanh(x)", 720.0, 0.0, 0.0).0, 1.0);
+        assert_eq!((v("sinh(1e-12)"), v("cosh(0)"), v("tanh(-1e-12)")), (1e-12f64.sinh(), 1.0, (-1e-12f64).tanh()));
         for f in fs {
             for &(x, y) in &[(0.7, 1.3), (2.0, 0.4), (1.5, 1.6)] {
                 let (_, dx, dy) = eval(f, x, y, 1.7);

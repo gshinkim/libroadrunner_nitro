@@ -3,6 +3,7 @@
 import os
 import re
 import tempfile
+import warnings
 from xml.sax.saxutils import quoteattr
 
 import numpy as np
@@ -152,6 +153,11 @@ class RoadRunner(object):
             sbml = sbml[len('file://'):]
         self._rr.load(sbml)
         self._changed()
+        eq = self._rr._equality_trigger_events()
+        if eq:
+            warnings.warn('event trigger tests equality (%s): it is true at a single instant, so the event fires only '
+                          'when an output time lands exactly on it; use >= or <= instead (e.g. time >= 20)'
+                          % ', '.join(i or '(unnamed)' for i in eq), stacklevel=2)
         if options is not None and getattr(options, 'conservedMoieties', False):
             self.conservedMoietyAnalysis = True
 

@@ -19,7 +19,7 @@ fn remap(op: Op, f: impl Fn(N) -> N) -> Op {
         PowI(a, k) => PowI(f(a), k), Exp(a) => Exp(f(a)), Ln(a) => Ln(f(a)), Log10(a) => Log10(f(a)),
         Sqrt(a) => Sqrt(f(a)), Abs(a) => Abs(f(a)), Sign(a) => Sign(f(a)), Floor(a) => Floor(f(a)),
         Ceil(a) => Ceil(f(a)), Sin(a) => Sin(f(a)), Cos(a) => Cos(f(a)), Tan(a) => Tan(f(a)),
-        Asin(a) => Asin(f(a)), Acos(a) => Acos(f(a)), Atan(a) => Atan(f(a)), Fact(a) => Fact(f(a)),
+        Asin(a) => Asin(f(a)), Acos(a) => Acos(f(a)), Atan(a) => Atan(f(a)), Sinh(a) => Sinh(f(a)), Cosh(a) => Cosh(f(a)), Tanh(a) => Tanh(f(a)), Fact(a) => Fact(f(a)),
         Rand(k, u, a, b, c, d) => Rand(k, u, f(a), f(b), f(c), f(d)),
         Lt(a, c) => Lt(f(a), f(c)), Le(a, c) => Le(f(a), f(c)), Eq(a, c) => Eq(f(a), f(c)),
         Ne(a, c) => Ne(f(a), f(c)), And(a, c) => And(f(a), f(c)), Or(a, c) => Or(f(a), f(c)),
@@ -115,7 +115,7 @@ fn show(d: &Dag, n: N, nm: &dyn Fn(u32) -> String, o: &mut String) {
         Sqrt(a) => f(o, "sqrt", &[a]), Abs(a) => f(o, "abs", &[a]), Floor(a) => f(o, "floor", &[a]),
         Ceil(a) => f(o, "ceil", &[a]), Sin(a) => f(o, "sin", &[a]), Cos(a) => f(o, "cos", &[a]),
         Tan(a) => f(o, "tan", &[a]), Asin(a) => f(o, "asin", &[a]), Acos(a) => f(o, "acos", &[a]),
-        Atan(a) => f(o, "atan", &[a]), Fact(a) => f(o, "factorial", &[a]),
+        Atan(a) => f(o, "atan", &[a]), Sinh(a) => f(o, "sinh", &[a]), Cosh(a) => f(o, "cosh", &[a]), Tanh(a) => f(o, "tanh", &[a]), Fact(a) => f(o, "factorial", &[a]),
         Rand(k, _, a, b, c, dd) => { // generic arity: (a, b) for two-parameter kinds, (a) otherwise, then the bounds
             let two = crate::rand::NAMES[k as usize].1 == 2;
             if two { f(o, crate::rand::NAMES[k as usize].0, &[a, b, c, dd]) } else { f(o, crate::rand::NAMES[k as usize].0, &[a, c, dd]) }
