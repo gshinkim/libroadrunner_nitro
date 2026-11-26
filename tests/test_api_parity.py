@@ -15,6 +15,7 @@ MODULE_ALLOW = {
     'roadrunner', 'np', 'weakref', 'sigtrap', 'runTests', 'Optional', 'List', 'Compiler',
     'ExecutableModelFactory', 'RegistrationFactory', 'Registrable', 'PyConservedMoietyConverter',
     'PyEventListener', 'PyIntegratorListener', 'EventListener', 'fixMissingStoichAndMath', 'SBMLReader',
+    'typing',  # the stdlib module, imported into roadrunner by some builds
 }
 CLASS_ALLOW = {'thisown', 'this'}
 CONFIG_ALLOW = {'thisown'}
@@ -28,8 +29,15 @@ def missing(ref, ours, allow):
     return sorted(public(ref) - public(ours) - allow)
 
 
+def swig_static(name):
+    """SWIG's flat wrapper of a static method, Class_method (some builds export them, e.g. Logger_setLevel):
+    plumbing, since the method itself is Class.method."""
+    cls, _, meth = name.partition('_')
+    return bool(meth) and cls[:1].isupper() and hasattr(getattr(roadrunner, cls, None), meth)
+
+
 def test_module_names():
-    gone = missing(roadrunner, roadrunner_nitro, MODULE_ALLOW)
+    gone = [n for n in missing(roadrunner, roadrunner_nitro, MODULE_ALLOW) if not swig_static(n)]
     assert not gone, 'module names missing from roadrunner_nitro: %s' % gone
 
 

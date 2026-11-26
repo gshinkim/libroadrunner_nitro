@@ -1,0 +1,4 @@
+# Test inputs are checksummed (tests/test_sbml_conversion.py, the SBML Test Suite cases) and compared byte for byte:
+# keep them exactly as committed on every platform (no CRLF conversion on a Windows checkout).
+tests/models/** -text
+tests/reference/** -text

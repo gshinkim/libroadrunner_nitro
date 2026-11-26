@@ -91,7 +91,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pytest numpy antimony
           python -m pip install --no-index --find-links dist roadrunner-nitro  # this wheel, never one from PyPI
-          python -m pip install libroadrunner || echo "no libroadrunner wheel here: its comparison tests skip"
+          python -m pip install libroadrunner==2.11.0 || echo "no libroadrunner 2.11.0 wheel here: its comparison tests skip"
       - name: Test (the installed wheel, not the source tree)
         shell: bash
         run: |
