@@ -109,9 +109,22 @@ impl Core {
         if self.nss { return Err("steady state: the model has events or time-dependent rates".into()); }
         let start = (self.x.clone(), self.t);
         match self.solve_settings(cfg) {
-            Err(e) if self.robust_from(start) => { let _ = e; Ok(None) }
+            Err(e) if self.robust_from(start.clone()) => { let _ = e; Ok(None) }
+            Err(e) if self.negative_from(start, cfg) => { let _ = e; Ok(None) }
             r => r,
         }
+    }
+
+    /// Last resort: NLEQ's Newton from the starting state accepting negative concentrations. A
+    /// non-negative steady state is preferred (tried first), but where the only steady state is negative
+    /// (e.g. a linear model), libroadrunner's NLEQ returns it, and so does the engine.
+    fn negative_from(&mut self, (x, t): (Vec<f64>, f64), cfg: &SsCfg) -> bool {
+        if cfg.newton.allow_negative || !cfg.time0 { return false; }
+        (self.x, self.t) = (x, t);
+        self.touch();
+        let mut o = cfg.newton.clone();
+        o.allow_negative = true;
+        self.newton_here(&o, cfg.time0)
     }
 
     /// Where libroadrunner's settings give up but a steady state exists (e.g. Newton diverges from a

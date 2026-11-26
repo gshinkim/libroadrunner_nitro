@@ -600,7 +600,10 @@ fn sbml_edit(op: &str, sbml: &str, args: &Bound<'_, pyo3::types::PyTuple>) -> Py
     r.map_err(PyValueError::new_err)
 }
 
+/// The raw engine binding, `roadrunner_nitro.core`. The public `roadrunner_nitro` package (python/)
+/// wraps it in libroadrunner's Python API.
 #[pymodule]
+#[pyo3(name = "core")]
 fn roadrunner_nitro(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(simulate_fixed, m)?)?;
     crate::sens::register(m)?;

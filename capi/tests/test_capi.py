@@ -303,7 +303,7 @@ class Capi:
 
     def _shadow(self):
         if getattr(self, 'sh', None) is None:
-            self.sh = rn.RoadRunner(self.sbml)
+            self.sh = rn.core.RoadRunner(self.sbml)
         self.sh.conservedMoietyAnalysis = bool(self._cma())
         return self.sh
 
@@ -374,7 +374,7 @@ CHAIN = rn.antimony_to_sbml(T.ANT['chain'])
 
 def pair(sbml):
     c = Capi(sbml)
-    r = rn.RoadRunner(sbml)
+    r = rn.core.RoadRunner(sbml)
     return c, r
 
 
@@ -496,7 +496,7 @@ def test_individual_tolerance():
     rules, then floating species; values recorded from libroadrunner 2.11), and a tight one on the tiny
     species B makes it accurate where the scaled scalar tolerance leaves it unresolved."""
     sbml = rn.antimony_to_sbml(TOL)
-    c, r = Capi(sbml), rn.RoadRunner(sbml)
+    c, r = Capi(sbml), rn.core.RoadRunner(sbml)
     h = c.h
     c.tol(1e-6, 1e-6)
     sel = b'time, [A], [B]'

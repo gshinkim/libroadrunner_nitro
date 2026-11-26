@@ -9,7 +9,7 @@ from pathlib import Path
 
 LEVELS = ((2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (3, 1), (3, 2))
 HERE = Path(__file__).resolve().parent
-SOSBENCH = HERE.parents[1] / "benchmarks" / "sosbench"
+SOSBENCH = HERE / "models" / "sosbench"
 REFERENCE = HERE / "reference" / "sbml_conversion.json"
 
 

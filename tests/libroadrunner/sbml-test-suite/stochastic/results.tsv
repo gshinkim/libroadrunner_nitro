@@ -1,0 +1,189 @@
+Test #	Level/Version	Synopsis	nWrongMeans	nWrongSDs	nWrongLogMeans	nWrongLogSDs
+00001	00001-sbml-l2v1.xml	Basic two-reaction system	0	0	None	None	1.072620153427124	False
+00001	00001-sbml-l3v2.xml	Basic two-reaction system	0	0	None	None	1.0210390090942383	False
+00002	00002-sbml-l2v1.xml	Basic two-reaction system with local parameters.	0	0	None	None	1.0277693271636963	False
+00002	00002-sbml-l3v2.xml	Basic two-reaction system with local parameters.	0	0	None	None	1.0306322574615479	False
+00004	00004-sbml-l2v1.xml	Basic two-reaction system.	0	0	None	None	0.9967663288116455	False
+00004	00004-sbml-l3v2.xml	Basic two-reaction system.	0	0	None	None	1.0161068439483643	False
+00006	00006-sbml-l2v1.xml	Basic two-reaction system with boundary species	0	0	None	None	1.1474416255950928	False
+00006	00006-sbml-l3v2.xml	Basic two-reaction system with boundary species	0	0	None	None	1.1967403888702393	False
+00007	00007-sbml-l2v1.xml	Basic two-reaction system with two species	0	0	None	None	1.1325006484985352	False
+00007	00007-sbml-l3v2.xml	Basic two-reaction system with two species	0	0	None	None	1.1363468170166016	False
+00008	00008-sbml-l2v1.xml	Basic two-reaction system	0	0	None	None	1.0432333946228027	False
+00008	00008-sbml-l3v2.xml	Basic two-reaction system	0	0	None	None	1.0201640129089355	False
+00009	00009-sbml-l2v1.xml	Basic two-reaction system	0	0	None	None	1.0502374172210693	False
+00009	00009-sbml-l3v2.xml	Basic two-reaction system	0	0	None	None	1.0277221202850342	False
+00010	00010-sbml-l2v1.xml	Basic two-reaction system	0	0	None	None	1.001676321029663	False
+00010	00010-sbml-l3v2.xml	Basic two-reaction system	0	0	None	None	1.069237470626831	False
+00011	00011-sbml-l2v1.xml	Basic two-reaction system	0	0	None	None	1.0036754608154297	False
+00011	00011-sbml-l3v2.xml	Basic two-reaction system	0	0	None	None	1.003680944442749	False
+00012	00012-sbml-l2v1.xml	Basic two-reaction system	0	0	None	None	1.030367136001587	False
+00012	00012-sbml-l3v2.xml	Basic two-reaction system	0	0	None	None	1.0487077236175537	False
+00013	00013-sbml-l2v1.xml	Basic two-reaction system	0	0	None	None	1.0850589275360107	False
+00013	00013-sbml-l3v2.xml	Basic two-reaction system	0	0	None	None	1.063995361328125	False
+00014	00014-sbml-l2v1.xml	Basic two-reaction system	0	0	None	None	1.0441997051239014	False
+00014	00014-sbml-l3v2.xml	Basic two-reaction system	0	0	None	None	1.0604832172393799	False
+00015	00015-sbml-l2v1.xml	Basic two-reaction system	0	0	None	None	1.0226664543151855	False
+00015	00015-sbml-l3v2.xml	Basic two-reaction system	0	0	None	None	1.0061886310577393	False
+00016	00016-sbml-l2v1.xml	Basic two-reaction system	0	0	None	None	1.0661664009094238	False
+00016	00016-sbml-l3v2.xml	Basic two-reaction system	0	0	None	None	1.0271680355072021	False
+00017	00017-sbml-l2v1.xml	Basic two-reaction system	0	0	None	None	1.0868041515350342	False
+00017	00017-sbml-l3v2.xml	Basic two-reaction system	0	0	None	None	1.0323729515075684	False
+00018	00018-sbml-l2v1.xml	Basic two-reaction system	0	0	None	None	1.0122075080871582	False
+00018	00018-sbml-l3v2.xml	Basic two-reaction system	0	0	None	None	1.0262441635131836	False
+00019	00019-sbml-l2v1.xml	Basic two-reaction system plus an assignment rule	0	0	None	None	1.1458299160003662	False
+00019	00019-sbml-l3v2.xml	Basic two-reaction system plus an assignment rule	0	0	None	None	1.19667649269104	False
+00020	00020-sbml-l2v1.xml	Basic two-reaction system.	0	0	None	None	1.0052943229675293	False
+00020	00020-sbml-l3v2.xml	Basic two-reaction system.	0	0	None	None	0.9892323017120361	False
+00021	00021-sbml-l2v1.xml	Basic two-reaction system.	0	0	None	None	1.0716090202331543	False
+00021	00021-sbml-l3v2.xml	Basic two-reaction system.	0	0	None	None	1.0267229080200195	False
+00022	00022-sbml-l2v1.xml	Basic two-reaction system.	0	0	None	None	1.0506632328033447	False
+00022	00022-sbml-l3v2.xml	Basic two-reaction system.	0	0	None	None	1.0716679096221924	False
+00024	00024-sbml-l2v1.xml	Basic two-reaction system.	0	0	None	None	1.2878468036651611	False
+00024	00024-sbml-l3v2.xml	Basic two-reaction system.	0	0	None	None	1.3838093280792236	False
+00025	00025-sbml-l2v1.xml	Basic two-reaction system.	0	0	None	None	1.275050401687622	False
+00025	00025-sbml-l3v2.xml	Basic two-reaction system.	0	0	None	None	1.2733826637268066	False
+00026	00026-sbml-l2v1.xml	Basic two-reaction system.	0	0	None	None	1.2862441539764404	False
+00026	00026-sbml-l3v2.xml	Basic two-reaction system.	0	0	None	None	1.2922911643981934	False
+00027	00027-sbml-l2v1.xml	Basic two-reaction system.	0	0	None	None	0.9897863864898682	False
+00027	00027-sbml-l3v2.xml	Basic two-reaction system.	0	0	None	None	1.0092463493347168	False
+00030	00030-sbml-l2v1.xml	Basic two-reaction system.	0	0	None	None	1.1192975044250488	False
+00030	00030-sbml-l3v2.xml	Basic two-reaction system.	0	0	None	None	1.0954222679138184	False
+00031	00031-sbml-l2v1.xml	Basic two-reaction system.	0	0	None	None	1.1483345031738281	False
+00031	00031-sbml-l3v2.xml	Basic two-reaction system.	0	0	None	None	1.121715784072876	False
+00033	00033-sbml-l2v1.xml	Basic two-reaction system with event.	0	0	None	None	1.1532776355743408	False
+00033	00033-sbml-l3v2.xml	Basic two-reaction system with event.	0	0	None	None	1.1355886459350586	False
+00034	00034-sbml-l2v1.xml	Basic two-reaction system.	0	0	None	None	1.0341873168945312	False
+00034	00034-sbml-l3v2.xml	Basic two-reaction system.	0	0	None	None	0.9981811046600342	False
+00035	00035-sbml-l2v1.xml	Basic two-reaction system.	0	0	None	None	0.9901809692382812	False
+00035	00035-sbml-l3v2.xml	Basic two-reaction system.	0	0	None	None	1.057276964187622	False
+00036	00036-sbml-l2v1.xml	Basic two-reaction system.	0	0	None	None	0.9596672058105469	False
+00036	00036-sbml-l3v2.xml	Basic two-reaction system.	0	0	None	None	1.0092060565948486	False
+00037	00037-sbml-l2v1.xml	Basic two-reaction system.	0	0	None	None	1.0257782936096191	False
+00037	00037-sbml-l3v2.xml	Basic two-reaction system.	0	0	None	None	1.0398058891296387	False
+00038	00038-sbml-l2v1.xml	Basic two-reaction system.	0	0	None	None	1.0807993412017822	False
+00038	00038-sbml-l3v2.xml	Basic two-reaction system.	0	0	None	None	1.063399076461792	False
+00039	00039-sbml-l2v1.xml	Basic two-reaction system.	0	0	None	None	1.2342395782470703	False
+00039	00039-sbml-l3v2.xml	Basic two-reaction system.	0	0	None	None	1.2804479598999023	False
+00040	00040-sbml-l3v1.xml	NormalDistribution test	0	0	None	None	1.2952120304107666	False
+00040	00040-sbml-l3v2.xml	NormalDistribution test	0	0	None	None	1.2061710357666016	False
+00041	00041-sbml-l3v1.xml	NormalDistribution test	0	0	None	None	1.2661898136138916	False
+00041	00041-sbml-l3v2.xml	NormalDistribution test	0	0	None	None	1.2197074890136719	False
+00042	00042-sbml-l3v1.xml	UniformDistribution test	0	0	None	None	1.1916723251342773	False
+00042	00042-sbml-l3v2.xml	UniformDistribution test	1	0	None	None	1.186711311340332	False
+00043	00043-sbml-l3v1.xml	ExponentialDistribution test	0	0	None	None	1.1695806980133057	False
+00043	00043-sbml-l3v2.xml	ExponentialDistribution test	0	1	None	None	1.2531661987304688	False
+00044	00044-sbml-l3v1.xml	ExponentialDistribution test	0	1	None	None	1.2711904048919678	False
+00044	00044-sbml-l3v2.xml	ExponentialDistribution test	0	1	None	None	1.2775356769561768	False
+00045	00045-sbml-l3v1.xml	GammaDistribution test	0	0	None	None	1.3386509418487549	False
+00045	00045-sbml-l3v2.xml	GammaDistribution test	0	1	None	None	1.276794672012329	False
+00046	00046-sbml-l3v1.xml	GammaDistribution test	0	1	None	None	1.327005386352539	False
+00046	00046-sbml-l3v2.xml	GammaDistribution test	0	0	None	None	1.2923643589019775	False
+00047	00047-sbml-l3v1.xml	PoissonDistribution test	0	0	None	None	1.2280125617980957	False
+00047	00047-sbml-l3v2.xml	PoissonDistribution test	0	0	None	None	1.398270606994629	False
+00048	00048-sbml-l3v1.xml	CauchyDistribution with one argument test	0	None	None	None	1.2611582279205322	False
+00048	00048-sbml-l3v2.xml	CauchyDistribution with one argument test	0	None	None	None	1.2807135581970215	False
+00049	00049-sbml-l3v1.xml	CauchyDistribution test	0	None	None	None	1.2647144794464111	False
+00049	00049-sbml-l3v2.xml	CauchyDistribution test	0	None	None	None	1.216179370880127	False
+00050	00050-sbml-l3v1.xml	ChiSquareDistribution test	0	0	None	None	1.3272771835327148	False
+00050	00050-sbml-l3v2.xml	ChiSquareDistribution test	0	2	None	None	1.2932868003845215	False
+00051	00051-sbml-l3v1.xml	ChiSquareDistribution test	0	0	None	None	1.2958486080169678	False
+00051	00051-sbml-l3v2.xml	ChiSquareDistribution test	0	0	None	None	1.3315889835357666	False
+00052	00052-sbml-l3v1.xml	Rayleigh Distribution test	0	0	None	None	1.2172620296478271	False
+00052	00052-sbml-l3v2.xml	Rayleigh Distribution test	0	0	None	None	1.222848892211914	False
+00053	00053-sbml-l3v1.xml	BernoulliDistribution test	0	0	None	None	1.1721761226654053	False
+00053	00053-sbml-l3v2.xml	BernoulliDistribution test	0	0	None	None	1.2001588344573975	False
+00054	00054-sbml-l3v1.xml	LaplaceDistribution test (one argument)	0	0	None	None	1.2326643466949463	False
+00054	00054-sbml-l3v2.xml	LaplaceDistribution test (one argument)	0	0	None	None	1.205847978591919	False
+00055	00055-sbml-l3v1.xml	LaplaceDistribution test	0	1	None	None	1.1952605247497559	False
+00055	00055-sbml-l3v2.xml	LaplaceDistribution test	0	0	None	None	1.2137506008148193	False
+00056	00056-sbml-l3v1.xml	LogNormalDistribution test	None	None	1	1	1.2589499950408936	False
+00056	00056-sbml-l3v2.xml	LogNormalDistribution test	None	None	1	1	1.2722973823547363	False
+00057	00057-sbml-l3v1.xml	BinomialDistribution test	0	0	None	None	1.6757678985595703	False
+00057	00057-sbml-l3v2.xml	BinomialDistribution test	0	1	None	None	1.6622827053070068	False
+00058	00058-sbml-l3v1.xml	BinomialDistribution test with truncation	0	0	None	None	1.757162094116211	False
+00058	00058-sbml-l3v2.xml	BinomialDistribution test with truncation	0	0	None	None	1.7397725582122803	False
+00059	00059-sbml-l3v1.xml	CauchyDistribution test with truncation	0	None	None	None	1.2808558940887451	False
+00059	00059-sbml-l3v2.xml	CauchyDistribution test with truncation	0	None	None	None	1.3111953735351562	False
+00060	00060-sbml-l3v1.xml	ChiSquareDistribution test with truncation	0	0	None	None	1.489668607711792	False
+00060	00060-sbml-l3v2.xml	ChiSquareDistribution test with truncation	0	0	None	None	1.5227549076080322	False
+00061	00061-sbml-l3v1.xml	ExponentialDistribution test with truncation	0	0	None	None	1.3608031272888184	False
+00061	00061-sbml-l3v2.xml	ExponentialDistribution test with truncation	1	0	None	None	1.3666536808013916	False
+00062	00062-sbml-l3v1.xml	GammaDistribution test with truncation	0	0	None	None	1.8398079872131348	False
+00062	00062-sbml-l3v2.xml	GammaDistribution test with truncation	0	0	None	None	1.772705316543579	False
+00063	00063-sbml-l3v1.xml	LaplaceDistribution test with truncation	0	0	None	None	1.3012433052062988	False
+00063	00063-sbml-l3v2.xml	LaplaceDistribution test with truncation	0	0	None	None	1.2842488288879395	False
+00064	00064-sbml-l3v1.xml	LogNormalDistribution test with truncation	None	None	1	1	1.5487120151519775	False
+00064	00064-sbml-l3v2.xml	LogNormalDistribution test with truncation	None	None	1	1	1.5842437744140625	False
+00065	00065-sbml-l3v1.xml	PoissonDistribution test with truncation	0	0	None	None	1.268195390701294	False
+00065	00065-sbml-l3v2.xml	PoissonDistribution test with truncation	0	1	None	None	1.2691607475280762	False
+00066	00066-sbml-l3v1.xml	Rayleigh Distribution test with truncation	0	0	None	None	1.3107340335845947	False
+00066	00066-sbml-l3v2.xml	Rayleigh Distribution test with truncation	1	0	None	None	1.2784512042999268	False
+00067	00067-sbml-l3v1.xml	NormalDistribution test	0	0	None	None	1.3017370700836182	False
+00067	00067-sbml-l3v2.xml	NormalDistribution test	0	0	None	None	1.2356083393096924	False
+00068	00068-sbml-l3v1.xml	ExponentialDistribution test	0	0	None	None	1.2771623134613037	False
+00068	00068-sbml-l3v2.xml	ExponentialDistribution test	0	0	None	None	1.3326938152313232	False
+00069	00069-sbml-l3v1.xml	NormalDistribution test with lower truncation	0	0	None	None	1.2627084255218506	False
+00069	00069-sbml-l3v2.xml	NormalDistribution test with lower truncation	0	1	None	None	1.2991595268249512	False
+00070	00070-sbml-l3v1.xml	NormalDistribution test with upper truncation bound	0	0	None	None	1.287776231765747	False
+00070	00070-sbml-l3v2.xml	NormalDistribution test with upper truncation bound	0	0	None	None	1.2787604331970215	False
+00071	00071-sbml-l3v1.xml	NormalDistribution test with lower inclusive bound	1	1	None	None	1.3737695217132568	False
+00071	00071-sbml-l3v2.xml	NormalDistribution test with lower inclusive bound	0	0	None	None	1.3292236328125	False
+00072	00072-sbml-l3v1.xml	NormalDistribution test with upper inclusive bound	0	0	None	None	1.3622965812683105	False
+00072	00072-sbml-l3v2.xml	NormalDistribution test with upper inclusive bound	0	1	None	None	1.3926973342895508	False
+00073	00073-sbml-l3v1.xml	NormalDistribution test with upper and lower bounds	0	0	None	None	1.264176368713379	False
+00073	00073-sbml-l3v2.xml	NormalDistribution test with upper and lower bounds	0	0	None	None	1.3178584575653076	False
+00074	00074-sbml-l3v1.xml	NormalDistribution test with upper and lower bounds	0	0	None	None	1.2675940990447998	False
+00074	00074-sbml-l3v2.xml	NormalDistribution test with upper and lower bounds	1	0	None	None	1.2461133003234863	False
+00075	00075-sbml-l3v1.xml	NormalDistribution test with asymmetric bounds	0	0	None	None	1.298269510269165	False
+00075	00075-sbml-l3v2.xml	NormalDistribution test with asymmetric bounds	0	0	None	None	1.2781519889831543	False
+00076	00076-sbml-l3v1.xml	NormalDistribution test with two-sided truncation greater than the mean	0	0	None	None	1.4058101177215576	False
+00076	00076-sbml-l3v2.xml	NormalDistribution test with two-sided truncation greater than the mean	0	0	None	None	1.4542136192321777	False
+00077	00077-sbml-l3v1.xml	ExponentialDistribution test with a lower bound	0	0	None	None	1.22271728515625	False
+00077	00077-sbml-l3v2.xml	ExponentialDistribution test with a lower bound	0	1	None	None	1.2532215118408203	False
+00078	00078-sbml-l3v1.xml	ExponentialDistribution test with an upper bound	0	0	None	None	1.2387428283691406	False
+00078	00078-sbml-l3v2.xml	ExponentialDistribution test with an upper bound	0	0	None	None	1.2337348461151123	False
+00079	00079-sbml-l3v1.xml	ExponentialDistribution test with bounded range	0	0	None	None	1.310838222503662	False
+00079	00079-sbml-l3v2.xml	ExponentialDistribution test with bounded range	0	0	None	None	1.2802588939666748	False
+00080	00080-sbml-l3v1.xml	NormalDistribution test	1	0	None	None	1.2447733879089355	False
+00080	00080-sbml-l3v2.xml	NormalDistribution test	0	0	None	None	1.272247076034546	False
+00081	00081-sbml-l3v1.xml	NormalDistribution test	0	0	None	None	1.2189044952392578	False
+00081	00081-sbml-l3v2.xml	NormalDistribution test	0	0	None	None	1.2648952007293701	False
+00082	00082-sbml-l3v1.xml	UniformDistribution test	0	0	None	None	1.1557118892669678	False
+00082	00082-sbml-l3v2.xml	UniformDistribution test	0	0	None	None	1.1813850402832031	False
+00083	00083-sbml-l3v1.xml	ExponentialDistribution test	0	1	None	None	1.2032458782196045	False
+00083	00083-sbml-l3v2.xml	ExponentialDistribution test	0	0	None	None	1.194826602935791	False
+00084	00084-sbml-l3v1.xml	ExponentialDistribution test	0	1	None	None	1.1871235370635986	False
+00084	00084-sbml-l3v2.xml	ExponentialDistribution test	0	0	None	None	1.2272510528564453	False
+00085	00085-sbml-l3v1.xml	GammaDistribution test	1	1	None	None	1.314150333404541	False
+00085	00085-sbml-l3v2.xml	GammaDistribution test	0	1	None	None	1.2989742755889893	False
+00086	00086-sbml-l3v1.xml	GammaDistribution test	0	0	None	None	1.2822318077087402	False
+00086	00086-sbml-l3v2.xml	GammaDistribution test	0	0	None	None	1.2902092933654785	False
+00087	00087-sbml-l3v1.xml	PoissonDistribution test	0	1	None	None	1.2381839752197266	False
+00087	00087-sbml-l3v2.xml	PoissonDistribution test	0	1	None	None	1.229189157485962	False
+00088	00088-sbml-l3v1.xml	NormalDistribution test	0	0	None	None	1.2300403118133545	False
+00088	00088-sbml-l3v2.xml	NormalDistribution test	0	0	None	None	1.238567590713501	False
+00089	00089-sbml-l3v1.xml	ExponentialDistribution test	0	0	None	None	1.2710821628570557	False
+00089	00089-sbml-l3v2.xml	ExponentialDistribution test	0	0	None	None	1.2964794635772705	False
+00090	00090-sbml-l3v1.xml	BinomialDistribution test	1	0	None	None	1.2277514934539795	False
+00090	00090-sbml-l3v2.xml	BinomialDistribution test	1	0	None	None	1.231200933456421	False
+00091	00091-sbml-l3v1.xml	Normal Distribution test	0	0	None	None	1.2433040142059326	False
+00091	00091-sbml-l3v2.xml	Normal Distribution test	0	0	None	None	1.2424132823944092	False
+00092	00092-sbml-l3v1.xml	UniformDistribution test	0	0	None	None	1.1986720561981201	False
+00092	00092-sbml-l3v2.xml	UniformDistribution test	2	0	None	None	1.1636989116668701	False
+00093	00093-sbml-l3v1.xml	Uniform distribution test	0	0	None	None	1.2091586589813232	False
+00093	00093-sbml-l3v2.xml	Uniform distribution test	0	0	None	None	1.2086615562438965	False
+00094	00094-sbml-l3v1.xml	Gamma distribution test	0	0	None	None	1.291590690612793	False
+00094	00094-sbml-l3v2.xml	Gamma distribution test	0	2	None	None	1.2756807804107666	False
+00095	00095-sbml-l3v1.xml	Gamma distribution test	0	1	None	None	1.312636375427246	False
+00095	00095-sbml-l3v2.xml	Gamma distribution test	0	1	None	None	1.2787647247314453	False
+00096	00096-sbml-l3v1.xml	NormalDistribution test	0	0	None	None	1.3016462326049805	False
+00096	00096-sbml-l3v2.xml	NormalDistribution test	0	0	None	None	1.2674469947814941	False
+00097	00097-sbml-l3v1.xml	NormalDistribution test	1	0	None	None	1.2641425132751465	False
+00097	00097-sbml-l3v2.xml	NormalDistribution test	0	1	None	None	1.2849557399749756	False
+00098	00098-sbml-l3v1.xml	NormalDistribution test	0	0	None	None	1.2622332572937012	False
+00098	00098-sbml-l3v2.xml	NormalDistribution test	0	1	None	None	1.2606682777404785	False
+00099	00099-sbml-l3v1.xml	NormalDistribution test	0	0	None	None	1.2877230644226074	False
+00099	00099-sbml-l3v2.xml	NormalDistribution test	1	0	None	None	1.2716045379638672	False
+00100	00100-sbml-l3v1.xml	NormalDistribution test	0	0	None	None	1.304197072982788	False
+00100	00100-sbml-l3v2.xml	NormalDistribution test	0	0	None	None	1.2744977474212646	False
