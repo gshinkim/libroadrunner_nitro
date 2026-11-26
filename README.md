@@ -38,7 +38,7 @@ Open a terminal (macOS: the Terminal app; Windows: PowerShell) and check each of
 
 1. **git**: `git --version`. If missing: on macOS run `xcode-select --install`; on Windows get it from
    https://git-scm.com.
-2. **Python 3.9 or newer** (only needed for the Python package): `python3 --version`. If missing:
+2. **Python 3.10 or newer** (only needed for the Python package): `python3 --version`. If missing:
    https://python.org.
 3. **Rust**, which compiles the engine: `cargo --version`. If missing:
    - macOS / Linux: run `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`, then close and
@@ -264,7 +264,7 @@ Only where libroadrunner's behaves wrongly:
 - **`cargo: command not found`**: Rust isn't installed, or the terminal was opened before installing it. Do
   Step 1 again, then open a new terminal.
 - **`pip install .` fails**: read the last lines of the error. Usually Rust is missing (above) or Python is
-  older than 3.9.
+  older than 3.10.
 - **`No module named roadrunner_nitro`**: the virtual environment isn't active. Run
   `source .venv/bin/activate` (Windows: `.venv\Scripts\activate`).
 - **A C program says `Library not loaded` or `cannot open shared object file`**: it can't find the library
