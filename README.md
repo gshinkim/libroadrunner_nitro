@@ -18,7 +18,17 @@ instead; it includes this engine.
 Your existing `libroadrunner` is not touched: this package has its own name (`roadrunner_nitro`), so both can be
 installed side by side.
 
-Tested on macOS (Apple Silicon). Linux and Windows should work but are untested.
+Tested on macOS (Apple Silicon) and Windows. Linux should work but is untested.
+
+## Quick install (Python)
+
+```bash
+pip install roadrunner-nitro
+```
+
+This installs a ready-built package (`import roadrunner_nitro`); no Rust or compiler is needed. It becomes
+available with the 1.0.0 release on PyPI; until then, build it from source with the steps below. The C library
+is built from source only.
 
 ---
 

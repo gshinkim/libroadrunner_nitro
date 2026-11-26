@@ -3,7 +3,7 @@ members = [".", "capi"]
 
 [package]
 name = "roadrunner_nitro"
-version = "0.2.0"
+version = "1.0.0"
 edition = "2021"
 
 [lib]
