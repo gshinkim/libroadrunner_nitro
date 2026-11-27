@@ -42,7 +42,7 @@ extern "C" fn rnd(k: f64, a: f64, b: f64, c: f64, d: f64) -> f64 { crate::rand::
 /// Tapes longer than this stay interpreted. Every temporary is an SSA value, so a long tape spills most of them and
 /// its stack frame grows with its length (8 bytes a value): beyond about 50 000 instructions the frame could exceed
 /// a worker thread's stack. (Found on Chen_MSB2009's sensitivity model, about 500 species.)
-const MAX_JIT_INS: usize = 50_000;
+pub(crate) const MAX_JIT_INS: usize = 50_000;
 
 /// Compile `ins` (as in `Tape::ins`); registers in `outs` that `ins` writes are stored back. None: not compiled
 /// (too long, or the target is not supported); the tape is then interpreted.

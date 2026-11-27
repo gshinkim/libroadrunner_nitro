@@ -91,3 +91,60 @@ fn tape_bench() {
                  speedups[0], speedups[speedups.len() - 1], speedups.len());
     }
 }
+
+/// Item 5 of the parameter-estimation spec, stage 2: are any tapes longer than the native-code limit
+/// (jit::MAX_JIT_INS), so that they run interpreted? Opt-in:
+///
+///     RRN_TAPE_DIRS="tests/models/biomodels;tests/models/bigmodel" cargo test --release tape_sizes -- --ignored --nocapture
+///
+/// For every .xml / .ant model under the folders (';'-separated, searched recursively): the instructions of the
+/// rates tape, the full tape (rates and Jacobian), the aux tape (rules, outputs), and for fitting with every
+/// parameter estimated, the sensitivity derivative tape and the switch tape.
+#[test]
+#[ignore]
+fn tape_sizes() {
+    use crate::jit::MAX_JIT_INS;
+    fn files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() { files(&p, out); }
+            else if matches!(p.extension().and_then(|x| x.to_str()), Some("xml" | "ant")) { out.push(p); }
+        }
+    }
+    let dirs = std::env::var("RRN_TAPE_DIRS").unwrap_or_else(|_| "tests/models/biomodels;tests/models/bigmodel".into());
+    let mut paths = vec![];
+    for d in dirs.split(';').filter(|d| !d.is_empty()) { files(Path::new(d), &mut paths); }
+    paths.sort();
+    let names = ["rates", "full", "aux", "sens", "switch"];
+    let (mut loaded, mut failed) = (0, 0);
+    let mut over = vec![0usize; 5];
+    let mut biggest: Vec<(usize, String)> = vec![(0, String::new()); 5];
+    let mut rows = vec![];
+    for p in &paths {
+        let Ok(text) = std::fs::read_to_string(p) else { continue };
+        let sbml = if p.extension().and_then(|x| x.to_str()) == Some("ant") {
+            antimony::sbml::write_sbml(&antimony::parse(&text).document)
+        } else if text.contains("<sbml") { text } else { continue };
+        let m = match crate::sbml::from_sbml(&sbml) { Ok((m, _)) => m, Err(_) => { failed += 1; continue } };
+        loaded += 1;
+        let ks: Vec<usize> = (0..m.pnames.len()).collect();
+        let st = crate::sens::sens_setup(&m, &ks);
+        let n = [m.rates_tape().ins.len(), m.full_tape().ins.len(), m.aux_tape().ins.len(), st.tape.ins.len(), st.sw.ins.len()];
+        let name = p.display().to_string();
+        for k in 0..5 {
+            if n[k] > MAX_JIT_INS { over[k] += 1; }
+            if n[k] > biggest[k].0 { biggest[k] = (n[k], name.clone()); }
+        }
+        rows.push((n[1], name, m.nx, m.nv, m.pnames.len(), n));
+    }
+    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    println!("{loaded} models loaded, {failed} not loaded; limit {MAX_JIT_INS} instructions");
+    println!("largest by full tape (states, rates, parameters; instructions rates / full / aux / sens / switch):");
+    for (_, name, nx, nv, np, n) in rows.iter().take(15) {
+        println!("  {name}: {nx} x {nv}, {np} p; {} / {} / {} / {} / {}", n[0], n[1], n[2], n[3], n[4]);
+    }
+    for k in 0..5 {
+        println!("{:7}: {} over the limit; largest {} ({})", names[k], over[k], biggest[k].0, biggest[k].1);
+    }
+}
