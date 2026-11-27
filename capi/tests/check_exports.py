@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Diff C_DECL_SPEC functions in rrc_api.h / rrc_types.h / rrc_utilities.h against the built library's exports.
+"""Diff C_DECL_SPEC functions in rrc_api.h / rrc_types.h / rrc_utilities.h / rrc_fit.h against the built library's exports.
 
 usage: python3 rrs/capi/tests/check_exports.py [path/to/libroadrunner_nitro_c_api.{dylib,so}]
 Exit 1 if any declared function is not exported.
@@ -12,7 +12,7 @@ ext = "dylib" if sys.platform == "darwin" else "so"
 lib = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else here.parents[1] / "target/release" / f"libroadrunner_nitro_c_api.{ext}"
 
 declared = set()
-for h in ("rrc_api.h", "rrc_types.h", "rrc_utilities.h"):
+for h in ("rrc_api.h", "rrc_types.h", "rrc_utilities.h", "rrc_fit.h"):
     src = re.sub(r"/\*.*?\*/|//[^\n]*", "", (inc / h).read_text(), flags=re.S)
     declared |= set(re.findall(r"C_DECL_SPEC[^;(]*?(\w+)\s*\(", src))
 

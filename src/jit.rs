@@ -33,6 +33,9 @@ extern "C" fn tan(a: f64) -> f64 { a.tan() }
 extern "C" fn asin(a: f64) -> f64 { a.asin() }
 extern "C" fn acos(a: f64) -> f64 { a.acos() }
 extern "C" fn atan(a: f64) -> f64 { a.atan() }
+extern "C" fn sinh(a: f64) -> f64 { a.sinh() }
+extern "C" fn cosh(a: f64) -> f64 { a.cosh() }
+extern "C" fn tanh(a: f64) -> f64 { a.tanh() }
 extern "C" fn fact(a: f64) -> f64 { crate::expr::factorial(a) }
 extern "C" fn rnd(k: f64, a: f64, b: f64, c: f64, d: f64) -> f64 { crate::rand::draw(k as u8, a, b, c, d) }
 
@@ -105,6 +108,9 @@ pub fn compile(ins: &[(u32, Op)], outs: &[u32], nregs: usize) -> Option<Jit> {
                 Asin(a) => call!(asin as extern "C" fn(f64) -> f64, a),
                 Acos(a) => call!(acos as extern "C" fn(f64) -> f64, a),
                 Atan(a) => call!(atan as extern "C" fn(f64) -> f64, a),
+                Sinh(a) => call!(sinh as extern "C" fn(f64) -> f64, a),
+                Cosh(a) => call!(cosh as extern "C" fn(f64) -> f64, a),
+                Tanh(a) => call!(tanh as extern "C" fn(f64) -> f64, a),
                 Fact(a) => call!(fact as extern "C" fn(f64) -> f64, a),
                 Rand(k, _, x, y, lo, hi) => {
                     let kc = b.ins().f64const(k as f64);

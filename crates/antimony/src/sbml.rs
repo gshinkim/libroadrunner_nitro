@@ -743,7 +743,9 @@ impl Converter<'_> {
                     substance_units: s.units.clone(),
                     has_only_substance_units: Some(s.is_substance_only),
                     boundary_condition: Some(s.is_boundary),
-                    constant: Some(s.constness == Constness::Const),
+                    // `const` on a species means a boundary species, not constant="true" (as libantimony):
+                    // events and rules may still set it
+                    constant: Some(s.constness == Constness::Const && !s.is_boundary),
                     conversion_factor: s.conversion_factor.clone(),
                     meta: symbol_meta(s),
                     ..sbml_io::Species::default()

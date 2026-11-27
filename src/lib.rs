@@ -1,4 +1,5 @@
 pub mod expr;
+pub mod fit;
 pub mod fixed;
 mod jit;
 pub mod model;
@@ -8,3 +9,5 @@ mod py;
 pub mod rand;
 pub mod rr;
 pub mod sbml;
+#[cfg(test)]
+mod tape_bench;

@@ -274,7 +274,7 @@ fn from_dag(dag: &Dag, n: u32, xs: &[String]) -> Result<E, Error> {
         Abs(a) => u("abs", a)?, Floor(a) => u("floor", a)?, Ceil(a) => u("ceiling", a)?,
         Sign(a) => { let x = r(a)?; op("piecewise", vec![num(1.0), op("gt", vec![x.clone(), num(0.0)]), num(-1.0), op("lt", vec![x, num(0.0)]), num(0.0)]) }
         Sin(a) => u("sin", a)?, Cos(a) => u("cos", a)?, Tan(a) => u("tan", a)?,
-        Asin(a) => u("arcsin", a)?, Acos(a) => u("arccos", a)?, Atan(a) => u("arctan", a)?, Fact(a) => u("factorial", a)?,
+        Asin(a) => u("arcsin", a)?, Acos(a) => u("arccos", a)?, Atan(a) => u("arctan", a)?, Sinh(a) => u("sinh", a)?, Cosh(a) => u("cosh", a)?, Tanh(a) => u("tanh", a)?, Fact(a) => u("factorial", a)?,
         Lt(a, b) => bi("lt", a, b)?, Le(a, b) => bi("leq", a, b)?, Eq(a, b) => bi("eq", a, b)?, Ne(a, b) => bi("neq", a, b)?,
         And(a, b) => bi("and", a, b)?, Or(a, b) => bi("or", a, b)?, Xor(a, b) => bi("xor", a, b)?, Not(a) => u("not", a)?,
         Sel(c, x, y) => op("piecewise", vec![r(x)?, r(c)?, r(y)?]),

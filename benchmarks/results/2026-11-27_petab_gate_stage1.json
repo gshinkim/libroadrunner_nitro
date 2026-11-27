@@ -1,0 +1,262 @@
+{
+ "meta": {
+  "roadrunner_nitro": "1.0.0rc2 + develop df07400",
+  "python": "3.12.10",
+  "date": "2026-11-27",
+  "collection": "Benchmarking-Initiative/Benchmark-Models-PEtab @ 49900951a5594a757ad5e651684c7f0a59272881 (2026-11-09)",
+  "amici_reference": "AMICI-dev/AMICI main: tests/benchmark_models/benchmark_models.yaml (fetched 2026-11-27)",
+  "machine": "Windows 10, Herbert's desktop"
+ },
+ "problems": [
+  {
+   "problem": "Alkan_SciSignal2018",
+   "loaded": false,
+   "refused": "measurement table, row 469 (line 470), column 'observableParameters': measurement-specific observable parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Armistead_CellDeathDis2024",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'noiseParameters': measurement-specific noise parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Bachmann_MSB2011",
+   "loaded": false,
+   "refused": "parameter table, row 27 (line 28), column 'objectivePriorType': priors come in stage 3",
+   "blocked_by": "stage 3: priors"
+  },
+  {
+   "problem": "Beer_MolBioSystems2014",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'noiseParameters': measurement-specific noise parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Bertozzi_PNAS2020",
+   "loaded": true,
+   "load_s": 0.0014916006475687027,
+   "n_free": 8,
+   "n_meas": 22,
+   "least_squares": false,
+   "nllh_nominal": 158.86426821020967,
+   "sim_max_rel_err": 7.726320854024224e-08,
+   "sim_median_rel_err": 1.0556005424673078e-08,
+   "gradient": {
+    "max_rel_err": 0.003545911511195614,
+    "worst": "R0_CA",
+    "grad_norm": 0.046870854446298515,
+    "norm_rel_err": 3.642161967288288e-05
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 1.1058345710243858e-07,
+    "worst": "I0_NY",
+    "grad_norm": 2037.899547232493,
+    "norm_rel_err": 7.055107009715202e-08
+   },
+   "t_objective_s": 7.089972496032715e-05,
+   "t_gradient_s": 0.00025540031492710114
+  },
+  {
+   "problem": "Blasi_CellSystems2016",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'noiseParameters': measurement-specific noise parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Boehm_JProteomeRes2014",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'noiseParameters': measurement-specific noise parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Borghans_BiophysChem1997",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'observableParameters': measurement-specific observable parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Brannmark_JBC2010",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'preequilibrationConditionId': pre-equilibration comes in stage 2",
+   "blocked_by": "stage 2: pre-equilibration"
+  },
+  {
+   "problem": "Bruno_JExpBot2016",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'noiseParameters': measurement-specific noise parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Chen_MSB2009",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'observableParameters': measurement-specific observable parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Crauste_CellSystems2017",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'noiseParameters': measurement-specific noise parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Elowitz_Nature2000",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'observableParameters': measurement-specific observable parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Fiedler_BMCSystBiol2016",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'observableParameters': measurement-specific observable parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Froehlich_CellSystems2018",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'observableParameters': measurement-specific observable parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Fujita_SciSignal2010",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'observableParameters': measurement-specific observable parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Giordano_Nature2020",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'noiseParameters': measurement-specific noise parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Isensee_JCB2018",
+   "loaded": false,
+   "refused": "parameter table, row 2 (line 3), column 'objectivePriorType': priors come in stage 3",
+   "blocked_by": "stage 3: priors"
+  },
+  {
+   "problem": "Lang_PLOSComputBiol2024",
+   "loaded": false,
+   "refused": "parameter table, row 343 (line 344), column 'objectivePriorType': priors come in stage 3",
+   "blocked_by": "stage 3: priors"
+  },
+  {
+   "problem": "Laske_PLOSComputBiol2019",
+   "loaded": false,
+   "refused": "measurement table, row 11 (line 12), column 'observableParameters': measurement-specific observable parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Liu_IFACPapersOnLine2025",
+   "loaded": false,
+   "refused": "model: events are not supported yet (stage 4)",
+   "blocked_by": "stage 4: events"
+  },
+  {
+   "problem": "Lucarelli_CellSystems2018",
+   "loaded": true,
+   "load_s": 0.010895399376749992,
+   "n_free": 84,
+   "n_meas": 1755,
+   "least_squares": false,
+   "nllh_nominal": 1681.6059865049847,
+   "sim_max_rel_err": 1.7134442802221867e-07,
+   "sim_median_rel_err": 0.0,
+   "amici_nllh": 1681.6059879426584,
+   "nllh_diff": -1.4376737453858368e-06,
+   "gradient": {
+    "max_rel_err": 0.2176553479299931,
+    "worst": "geneC_turn",
+    "grad_norm": 0.16432850888722628,
+    "norm_rel_err": 0.005886090767076181
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 4.2240152051498666e-05,
+    "worst": "geneL_act2",
+    "grad_norm": 1446857.5733465725,
+    "norm_rel_err": 5.107142123020996e-08
+   },
+   "t_objective_s": 0.0019767004996538162,
+   "t_gradient_s": 0.11343790031969547
+  },
+  {
+   "problem": "Okuonghae_ChaosSolitonsFractals2020",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'noiseParameters': measurement-specific noise parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Oliveira_NatCommun2021",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'noiseParameters': measurement-specific noise parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Perelson_Science1996",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'noiseParameters': measurement-specific noise parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Rahman_MBS2016",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'noiseParameters': measurement-specific noise parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Raia_CancerResearch2011",
+   "loaded": false,
+   "refused": "measurement table, row 8 (line 9), column 'observableParameters': measurement-specific observable parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Raimundez_PCB2020",
+   "loaded": false,
+   "refused": "parameter table, row 2 (line 3), column 'objectivePriorType': priors come in stage 3",
+   "blocked_by": "stage 3: priors"
+  },
+  {
+   "problem": "SalazarCavazos_MBoC2020",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'noiseParameters': measurement-specific noise parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Schwen_PONE2014",
+   "loaded": false,
+   "refused": "parameter table, row 3 (line 4), column 'objectivePriorType': priors come in stage 3",
+   "blocked_by": "stage 3: priors"
+  },
+  {
+   "problem": "Smith_BMCSystBiol2013",
+   "loaded": false,
+   "refused": "model: events are not supported yet (stage 4)",
+   "blocked_by": "stage 4: events"
+  },
+  {
+   "problem": "Sneyd_PNAS2002",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'noiseParameters': measurement-specific noise parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Weber_BMC2015",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'preequilibrationConditionId': pre-equilibration comes in stage 2",
+   "blocked_by": "stage 2: pre-equilibration"
+  },
+  {
+   "problem": "Zhao_QuantBiol2020",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'noiseParameters': measurement-specific noise parameters (placeholders) come in stage 2",
+   "blocked_by": "stage 2: placeholders"
+  },
+  {
+   "problem": "Zheng_PNAS2012",
+   "loaded": false,
+   "refused": "measurement table, row 1 (line 2), column 'preequilibrationConditionId': pre-equilibration comes in stage 2",
+   "blocked_by": "stage 2: pre-equilibration"
+  }
+ ]
+}

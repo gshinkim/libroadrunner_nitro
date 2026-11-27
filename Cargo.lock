@@ -1365,7 +1365,7 @@ dependencies = [
 
 [[package]]
 name = "roadrunner_nitro"
-version = "0.2.0"
+version = "1.0.0-rc.2"
 dependencies = [
  "antimony-rs",
  "cranelift-codegen",
@@ -1383,8 +1383,9 @@ dependencies = [
 
 [[package]]
 name = "roadrunner_nitro_c_api"
-version = "0.1.0"
+version = "1.0.0-rc.2"
 dependencies = [
+ "antimony-rs",
  "libc",
  "roadrunner_nitro",
 ]

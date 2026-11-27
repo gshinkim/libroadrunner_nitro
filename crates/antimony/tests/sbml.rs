@@ -252,6 +252,22 @@ fn boundary_species_and_substance_only() {
 }
 
 #[test]
+fn ext_is_const() {
+    // libantimony reads `ext` as `const`: a boundary species (= $S8), and reserves the word
+    let ext = model("ext S8, S9;
+S8 -> S9; k*S8;
+k = 0.1; S8 = 10;");
+    let konst = model("const S8, S9;
+S8 -> S9; k*S8;
+k = 0.1; S8 = 10;");
+    for id in ["S8", "S9"] {
+        let b = |m: &sbml_io::Model| m.species.iter().find(|s| s.id == id).map(|s| s.boundary_condition);
+        assert_eq!(b(&ext), Some(Some(true)), "{id}");
+        assert_eq!(b(&ext), b(&konst), "{id}");
+    }
+}
+
+#[test]
 fn xml_is_escaped() {
     assert_eq!(
         xml_escape(r#"a & b <c> "d""#),

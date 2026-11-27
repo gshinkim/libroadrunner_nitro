@@ -7,6 +7,7 @@
 The raw engine binding (plain arrays, no wrappers) is ``roadrunner_nitro.core``.
 """
 from . import core
+from . import fit  # parameter estimation: roadrunner_nitro.fit
 from .config import Config, Logger, SelectionRecord
 from .model import ExecutableModel
 from .named_array import NamedArray
@@ -24,8 +25,11 @@ from .core import (Model, RateDerivatives, Session, antimony_to_sbml, eigenvalue
                    from_sbml, gillespie_steps, sbml_edit, simulate_fixed, time_sensitivities)
 
 try:
-    from importlib.metadata import version as _version
-    __version__ = _version('libroadrunner_nitro')
+    from importlib.metadata import PackageNotFoundError, version as _version
+    try:
+        __version__ = _version('roadrunner-nitro')
+    except PackageNotFoundError:  # Python 3.9 does not normalize the name to the installed roadrunner_nitro
+        __version__ = _version('roadrunner_nitro')
 except Exception:  # running from a source tree
     __version__ = '0.0.0'
 

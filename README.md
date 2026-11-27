@@ -18,7 +18,17 @@ instead; it includes this engine.
 Your existing `libroadrunner` is not touched: this package has its own name (`roadrunner_nitro`), so both can be
 installed side by side.
 
-Tested on macOS (Apple Silicon). Linux and Windows should work but are untested.
+Tested on macOS (Apple Silicon) and Windows. Linux should work but is untested.
+
+## Quick install (Python)
+
+```bash
+pip install roadrunner-nitro
+```
+
+This installs a ready-built package (`import roadrunner_nitro`); no Rust or compiler is needed. It becomes
+available with the 1.0.0 release on PyPI; until then, build it from source with the steps below. The C library
+is built from source only.
 
 ---
 
@@ -28,7 +38,7 @@ Open a terminal (macOS: the Terminal app; Windows: PowerShell) and check each of
 
 1. **git**: `git --version`. If missing: on macOS run `xcode-select --install`; on Windows get it from
    https://git-scm.com.
-2. **Python 3.9 or newer** (only needed for the Python package): `python3 --version`. If missing:
+2. **Python 3.10 or newer** (only needed for the Python package): `python3 --version`. If missing:
    https://python.org.
 3. **Rust**, which compiles the engine: `cargo --version`. If missing:
    - macOS / Linux: run `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`, then close and
@@ -105,6 +115,34 @@ print(r.simulate(0, 10, 6))
 The method names are libroadrunner's: `simulate`, `steadyState`, `getCC`, `getValue`, `setValue`,
 `getFloatingSpeciesIds`, `getReactionRates`, `reset`, and so on. One difference: functions that return a matrix
 (for example the Jacobian or the stoichiometry matrix) give back three things, `(array, row names, column names)`.
+
+### Fit a model to data (parameter estimation, in development)
+
+`roadrunner_nitro.fit` estimates parameters from data: exact gradients, multistart least squares, and confidence
+intervals. It reads [PEtab](https://petab.readthedocs.io) problems, or you build the problem in Python:
+
+```python
+from roadrunner_nitro import fit
+
+p = fit.Problem.from_petab('problem.yaml')     # or build it by hand, below
+
+p = fit.Problem(sbml)                          # the model above
+p.add_parameter('k1', scale='log10', lower=1e-3, upper=1e3, nominal=1)
+p.add_parameter('k2', scale='log10', lower=1e-3, upper=1e3, nominal=1)
+p.add_condition('normal')                      # the model as it is
+p.add_condition('half', {'X0': 5})             # an experiment with X0 changed
+p.add_observable('S1_obs', 'S1', noise_formula='0.1')
+p.add_measurements('normal', 'S1_obs', times, values)   # your data
+p.add_measurements('half', 'S1_obs', times, values_half)
+
+r = p.fit(n_starts=20)                         # fits from 20 starting points, on all cores
+print(r)                                       # best parameters, and how many starts found them
+print(p.fisher(r.best))                        # 95% confidence intervals
+```
+
+The same fitting is in the C library through `rrc_fit.h` (see `capi/examples/fit.c`). This is stage 1 of the
+work: models with events, PEtab placeholders, pre-equilibration and priors come later and are refused with a
+clear error until then.
 
 ---
 
@@ -254,7 +292,7 @@ Only where libroadrunner's behaves wrongly:
 - **`cargo: command not found`**: Rust isn't installed, or the terminal was opened before installing it. Do
   Step 1 again, then open a new terminal.
 - **`pip install .` fails**: read the last lines of the error. Usually Rust is missing (above) or Python is
-  older than 3.9.
+  older than 3.10.
 - **`No module named roadrunner_nitro`**: the virtual environment isn't active. Run
   `source .venv/bin/activate` (Windows: `.venv\Scripts\activate`).
 - **A C program says `Library not loaded` or `cannot open shared object file`**: it can't find the library

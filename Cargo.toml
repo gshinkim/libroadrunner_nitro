@@ -3,7 +3,7 @@ members = [".", "capi"]
 
 [package]
 name = "roadrunner_nitro"
-version = "0.2.0"
+version = "1.0.0-rc.2"
 edition = "2021"
 
 [lib]
@@ -11,7 +11,7 @@ name = "roadrunner_nitro"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pyo3 = { version = "0.30", features = ["extension-module", "abi3-py39"], optional = true }
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py310"], optional = true }
 numpy = { version = "0.30", optional = true }
 rayon = "1.12"
 # Antimony -> SBML in pure Rust (copied from sys-bio/PathwayDesigner-rs, see crates/UPSTREAM)

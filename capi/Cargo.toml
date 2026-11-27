@@ -1,6 +1,6 @@
 [package]
 name = "roadrunner_nitro_c_api"
-version = "0.1.0"
+version = "1.0.0-rc.2"
 edition = "2021"
 description = "libroadrunner C API (rrc_api.h) backed by the roadrunner_nitro engine"
 
@@ -11,3 +11,7 @@ crate-type = ["cdylib"]
 [dependencies]
 roadrunner_nitro = { path = ".." }
 libc = "0.2"
+
+[dev-dependencies]
+# test models written in Antimony
+antimony = { package = "antimony-rs", path = "../crates/antimony", features = ["sbml"] }

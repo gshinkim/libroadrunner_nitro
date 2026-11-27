@@ -10,7 +10,7 @@ use crate::model::{Key, Model, Rules};
 use rayon::prelude::*;
 use std::fmt::Write;
 
-fn remap(op: Op, f: impl Fn(N) -> N) -> Op {
+pub(crate) fn remap(op: Op, f: impl Fn(N) -> N) -> Op {
     use Op::*;
     match op {
         Const(_) | Var(_) | Par(_) | Time => op,
@@ -19,7 +19,7 @@ fn remap(op: Op, f: impl Fn(N) -> N) -> Op {
         PowI(a, k) => PowI(f(a), k), Exp(a) => Exp(f(a)), Ln(a) => Ln(f(a)), Log10(a) => Log10(f(a)),
         Sqrt(a) => Sqrt(f(a)), Abs(a) => Abs(f(a)), Sign(a) => Sign(f(a)), Floor(a) => Floor(f(a)),
         Ceil(a) => Ceil(f(a)), Sin(a) => Sin(f(a)), Cos(a) => Cos(f(a)), Tan(a) => Tan(f(a)),
-        Asin(a) => Asin(f(a)), Acos(a) => Acos(f(a)), Atan(a) => Atan(f(a)), Fact(a) => Fact(f(a)),
+        Asin(a) => Asin(f(a)), Acos(a) => Acos(f(a)), Atan(a) => Atan(f(a)), Sinh(a) => Sinh(f(a)), Cosh(a) => Cosh(f(a)), Tanh(a) => Tanh(f(a)), Fact(a) => Fact(f(a)),
         Rand(k, u, a, b, c, d) => Rand(k, u, f(a), f(b), f(c), f(d)),
         Lt(a, c) => Lt(f(a), f(c)), Le(a, c) => Le(f(a), f(c)), Eq(a, c) => Eq(f(a), f(c)),
         Ne(a, c) => Ne(f(a), f(c)), And(a, c) => And(f(a), f(c)), Or(a, c) => Or(f(a), f(c)),
@@ -115,7 +115,7 @@ fn show(d: &Dag, n: N, nm: &dyn Fn(u32) -> String, o: &mut String) {
         Sqrt(a) => f(o, "sqrt", &[a]), Abs(a) => f(o, "abs", &[a]), Floor(a) => f(o, "floor", &[a]),
         Ceil(a) => f(o, "ceil", &[a]), Sin(a) => f(o, "sin", &[a]), Cos(a) => f(o, "cos", &[a]),
         Tan(a) => f(o, "tan", &[a]), Asin(a) => f(o, "asin", &[a]), Acos(a) => f(o, "acos", &[a]),
-        Atan(a) => f(o, "atan", &[a]), Fact(a) => f(o, "factorial", &[a]),
+        Atan(a) => f(o, "atan", &[a]), Sinh(a) => f(o, "sinh", &[a]), Cosh(a) => f(o, "cosh", &[a]), Tanh(a) => f(o, "tanh", &[a]), Fact(a) => f(o, "factorial", &[a]),
         Rand(k, _, a, b, c, dd) => { // generic arity: (a, b) for two-parameter kinds, (a) otherwise, then the bounds
             let two = crate::rand::NAMES[k as usize].1 == 2;
             if two { f(o, crate::rand::NAMES[k as usize].0, &[a, b, c, dd]) } else { f(o, crate::rand::NAMES[k as usize].0, &[a, c, dd]) }
@@ -174,6 +174,67 @@ pub fn sens_model(m: &Model, k: Option<usize>) -> Result<Model, String> {
         if !m.pnames.contains(x) { pn.push(x.clone()); pv.push(m.init[i]); }
     }
     pn.extend((0..nx).map(sname));
+    pv.resize(pn.len(), 0.0);
+    Model::new(vec![], vec![], vec![], vec![], vec![], vec![], pn, pv,
+               Rules { rate, events: m.event_src.clone(), ..Default::default() })
+}
+
+/// Augmented model for directional sensitivities, compiled once for many directions: states [x | s] with
+/// ds/dt = J(x) s + sum_q c_q df/dp_{ks[q]}, where the coefficients c_q are parameters `__c{q}` (default 0).
+/// A direction is chosen at load time by the c values and the initial s (`__s{i}` states), so one model
+/// serves every (condition, estimated parameter) pair of a fitting problem. Events act on x only.
+pub fn sens_model_dirs(m: &Model, ks: &[usize]) -> Result<Model, String> {
+    let (nx, nv, np) = (m.nx, m.nv, m.pnames.len());
+    let nl = nx + np;
+    let (mut dag, v) = lift(m);
+    let cvar: Vec<N> = (0..ks.len()).map(|q| dag.mk(Op::Var((nl + nx + q) as u32))).collect();
+    let mut g = Vec::with_capacity(nv);
+    for &r in &v {
+        let mut has_t = false;
+        let mut acc = dag.cst(0.0);
+        for (q, &k) in ks.iter().enumerate() {
+            let d = dag.diff(r, Op::Var((nx + k) as u32));
+            if dag.val(d) == Some(0.0) { continue; }
+            let t = dag.mk(Op::Mul(cvar[q], d));
+            acc = dag.mk(Op::Add(acc, t));
+        }
+        for l in dag.deps(r, &mut has_t) {
+            if l as usize >= nx { continue; }
+            let dl = dag.diff(r, Op::Var(l));
+            let sl = dag.mk(Op::Var((nl + l as usize) as u32));
+            let t = dag.mk(Op::Mul(dl, sl));
+            acc = dag.mk(Op::Add(acc, t));
+        }
+        g.push(acc);
+    }
+    let sname = |i: usize| format!("__s{i}");
+    let nm = |r: u32| {
+        let r = r as usize;
+        if r < nx { m.state_ids[r].clone() } else if r < nl { m.pnames[r - nx].clone() } else if r < nl + nx { sname(r - nl) } else { format!("__c{}", r - nl - nx) }
+    };
+    let mut rate = Vec::with_capacity(2 * nx);
+    for (sens, terms) in [(false, &v), (true, &g)] {
+        for i in 0..nx {
+            let mut acc = dag.cst(0.0);
+            for (j, &t) in terms.iter().enumerate() {
+                let c = m.stoich[i * nv + j];
+                if c == 0.0 { continue; }
+                let c = dag.cst(if j < m.nr { c / m.vol[i] } else { c });
+                let ct = dag.mk(Op::Mul(c, t));
+                acc = dag.mk(Op::Add(acc, ct));
+            }
+            let mut s = String::new();
+            show(&dag, acc, &nm, &mut s);
+            if s.len() > MAX_FORMULA { return Err("sensitivity equations too large".into()); }
+            rate.push((if sens { sname(i) } else { m.state_ids[i].clone() }, s));
+        }
+    }
+    let (mut pn, mut pv) = (m.pnames.clone(), m.pvals.clone());
+    for (i, x) in m.state_ids.iter().enumerate() {
+        if !m.pnames.contains(x) { pn.push(x.clone()); pv.push(m.init[i]); }
+    }
+    pn.extend((0..nx).map(sname));
+    pn.extend((0..ks.len()).map(|q| format!("__c{q}")));
     pv.resize(pn.len(), 0.0);
     Model::new(vec![], vec![], vec![], vec![], vec![], vec![], pn, pv,
                Rules { rate, events: m.event_src.clone(), ..Default::default() })

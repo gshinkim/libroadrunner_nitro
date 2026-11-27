@@ -297,6 +297,11 @@ impl<'a> Analyser<'a> {
             if symbol.kind == SymbolKind::Unknown {
                 symbol.kind = SymbolKind::Parameter;
             }
+            // A const species is a boundary species (as in libantimony), however it became a species: `const S8;`
+            // before `S8 -> S9` declares a symbol of no kind yet, which the reaction later makes a species.
+            if symbol.kind == SymbolKind::Species && symbol.constness == Constness::Const {
+                symbol.is_boundary = true;
+            }
         }
     }
 

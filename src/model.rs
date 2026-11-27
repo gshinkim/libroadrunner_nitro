@@ -119,7 +119,9 @@ pub struct Model {
     alg: Vec<bool>,       // per state: algebraic (mass 0)
     dly: Vec<(u32, u32, u32, u32)>, // per delay: (parameter index, tau, expr, expr-before-start registers) in dtape
     events: Vec<Event>,
-    comps: Vec<u32>, // aux registers of the comparisons inside triggers: a step is cut where any flips
+    comps: Vec<u32>, // aux registers of the comparisons inside triggers and rate laws: a step is cut where any flips
+    tbreak: Vec<u32>, // aux registers of time breakpoints in rate laws (`piecewise(x, time > t1, 0)`): steps stop there
+    eq_trig: bool,   // a trigger tests equality (`time == 20`): steps also stop at output times, as libroadrunner's
     col: Vec<Vec<(u32, f64)>>, // per reaction: (species, N_ij), for SSA
     jac: Vec<(u32, u32)>, // (rate j, state k) for each jacobian entry
     dt: Vec<u32>,         // reactions with explicit time dependence
@@ -653,7 +655,10 @@ impl Model {
         // every comparison inside a trigger is watched on its own (as CVODE root functions): a step
         // can cross a whole window (t >= a && t <= b) with the trigger false at both ends
         let mut cmp = vec![];
-        let mut stack: Vec<u32> = evs.iter().map(|e: &Event| aroots[e.trig as usize]).collect();
+        // So is every comparison inside a rate law (`piecewise(x, LECs + Capillaries < L, y)`), as libroadrunner's
+        // piecewise triggers: the step stops at the switch and the integrator restarts there. A step across the
+        // switch carries a jump h * df that the error test cannot pass when the state it feeds is near 0
+        let mut stack: Vec<u32> = evs.iter().map(|e: &Event| aroots[e.trig as usize]).chain(roots.iter().copied()).collect();
         let mut seen = std::collections::HashSet::new();
         while let Some(nd) = stack.pop() {
             if !seen.insert(nd) { continue; }
@@ -661,8 +666,39 @@ impl Model {
             if matches!(op, Op::Lt(..) | Op::Le(..) | Op::Eq(..) | Op::Ne(..)) { cmp.push(aroots.len() as u32); aroots.push(nd); }
             stack.extend(children(&op).iter().flatten());
         }
+        // time breakpoints: a comparison of time with an expression of parameters only, inside a rate law
+        // (or a rule it uses). A step can cross a short pulse (0.1 < time < 0.105) with the condition false
+        // at both ends; steps stop at each such time instead (the expression is re-evaluated, events may
+        // change parameters; never one with a random draw, which would consume the run's random stream)
+        let draws = |n: u32| {
+            let mut st = vec![n];
+            while let Some(i) = st.pop() {
+                let op = dag.nodes[i as usize];
+                if matches!(op, Op::Rand(..)) { return true; }
+                st.extend(children(&op).iter().flatten());
+            }
+            false
+        };
+        let mut tbk = vec![];
+        let mut stack: Vec<u32> = roots.clone();
+        let mut seen = std::collections::HashSet::new();
+        while let Some(nd) = stack.pop() {
+            if !seen.insert(nd) { continue; }
+            let op = dag.nodes[nd as usize];
+            if let Op::Lt(a, b) | Op::Le(a, b) | Op::Eq(a, b) | Op::Ne(a, b) = op {
+                for (x, y) in [(a, b), (b, a)] {
+                    let mut ht = false;
+                    if matches!(dag.nodes[x as usize], Op::Time) && dag.deps(y, &mut ht).is_empty() && !ht && !draws(y) {
+                        tbk.push(aroots.len() as u32);
+                        aroots.push(y);
+                    }
+                }
+            }
+            stack.extend(children(&op).iter().flatten());
+        }
         let aux = Tape::new_dyn(&dag, &aroots, nx, np, &dynp);
         let comps: Vec<u32> = cmp.iter().map(|&i| aux.outs[i as usize]).collect();
+        let tbreak: Vec<u32> = tbk.iter().map(|&i| aux.outs[i as usize]).collect();
         let o = |i: u32| aux.outs[i as usize];
         for ev in &mut evs {
             ev.trig = o(ev.trig);
@@ -701,9 +737,15 @@ impl Model {
         let mut keymap: HashMap<String, Key> = pnames.iter().enumerate().map(|(i, p)| (p.clone(), Key::Par(i))).collect();
         keymap.extend(state_ids.iter().enumerate().map(|(i, p)| (p.clone(), Key::Spec(i))));
         let outmap = outputs.iter().cloned().collect();
+        // `time == 20` is true at one instant, which a step only meets by stopping there; libroadrunner integrates
+        // from output time to output time, so its equality triggers fire at output times (COPASI agrees)
+        let eq_trig = x.events.iter().any(|e| {
+            let t = e.trigger.as_bytes();
+            e.trigger.contains("==") || e.trigger.match_indices("eq(").any(|(i, _)| i == 0 || !(t[i - 1].is_ascii_alphanumeric() || t[i - 1] == b'_'))
+        });
         Ok(Model { event_src: x.events, species, reactions, pnames, state_ids, outputs, keymap, outmap, init, vol, pvals, stoich, ns, nr, nx, nv,
                    sp: SparseLu::new(nx, jfull.iter().map(|e| e.0 as usize)),
-                   rates: rates_tape, full, aux, dtape, dly, alg, events: evs, comps, col, jac, dt, nz, jfull, indep, dep, l0, lc, nzr, jred, mca_c })
+                   rates: rates_tape, full, aux, dtape, dly, alg, events: evs, comps, tbreak, eq_trig, col, jac, dt, nz, jfull, indep, dep, l0, lc, nzr, jred, mca_c })
     }
 
     pub fn ni(&self) -> usize { self.indep.len() }
@@ -719,6 +761,8 @@ impl Model {
     }
 
     pub fn has_events(&self) -> bool { !self.events.is_empty() }
+    /// Does an event trigger test equality (`time == 20`)?
+    pub fn has_equality_trigger(&self) -> bool { self.eq_trig }
 
     /// Any algebraic state (DAE): the SSA does not support these.
     pub fn has_algebraic(&self) -> bool { self.alg.contains(&true) }
@@ -791,6 +835,25 @@ impl Model {
         self.full.run(regs);
         for (o, &r) in v.iter_mut().zip(&self.full.outs[..nv]) { *o = regs[r as usize]; }
         for (o, &r) in ev.iter_mut().zip(&self.full.outs[nv..]) { *o = regs[r as usize]; }
+    }
+
+    /// full_at for the solvers' Newton matrices: exact derivatives, except that a derivative which is not finite
+    /// while its rate is finite is set to 0. A fractional power such as x^0.2 has an infinite (or 0 * inf = NaN)
+    /// derivative only at x = 0, which the state leaves at once, and a single inf or NaN makes every step fail.
+    /// When the rate itself is NaN the state is invalid (x^1.4 at a slightly negative x in a trial step): the NaN
+    /// is kept, the factorization fails and the step shrinks. A large finite stand-in is worse than 0:
+    /// BDF keeps a Jacobian for many steps, and a huge entry shrinks every Newton correction for that state, so
+    /// the iteration passes its convergence test without converging (BIOMD0000000246, VIP^0.2 from VIP = 0).
+    /// The public `jacobian` stays exact.
+    fn full_at_solver(&self, hs: &Hist, regs: &mut [f64], v: &mut [f64], ev: &mut [f64], s: &[f64], t: f64) {
+        self.full_at(hs, regs, v, ev, s, t);
+        let nj = self.jac.len();
+        for (q, x) in ev.iter_mut().enumerate() {
+            if !x.is_finite() {
+                let j = if q < nj { self.jac[q].0 } else { self.dt[q - nj] } as usize;
+                if v[j].is_finite() { *x = 0.0; }
+            }
+        }
     }
 
     /// Aux tape (rules, rates, event expressions) at (s, t).
@@ -912,7 +975,7 @@ impl Model {
         for _ in 0..o.max_iter {
             if !fn0.is_finite() { return false; }
             if done(fn0, sc) { return true; }
-            self.full_at(hist, rf, v, ev, s, 0.0);
+            self.full_at_solver(hist, rf, v, ev, s, 0.0);
             jr.fill(0.0);
             for &(d, e, c) in &self.jred { jr[d as usize] += c * ev[e as usize]; }
             for (d, &y) in dx.iter_mut().zip(f.iter()) { *d = -y; }
@@ -922,9 +985,12 @@ impl Model {
                 // NLEQ2's rank strategy: the minimum-norm least-squares step
                 jr.fill(0.0);
                 for &(d, e, c) in &self.jred { jr[d as usize] += c * ev[e as usize]; }
+                if !jr.iter().all(|x| x.is_finite()) { return false; }
                 let j = nalgebra::DMatrix::from_row_slice(ni, ni, jr);
                 let eps = 1e-12 * inf_norm(jr).max(f64::MIN_POSITIVE);
-                let Ok(st) = j.svd(true, true).solve(&nalgebra::DVector::from_column_slice(dx), eps) else { return false };
+                // a bounded SVD: nalgebra's svd() iterates until it converges, which on some Jacobians is never
+                let Some(svd) = j.try_svd(true, true, f64::EPSILON, 1000) else { return false };
+                let Ok(st) = svd.solve(&nalgebra::DVector::from_column_slice(dx), eps) else { return false };
                 dx.copy_from_slice(st.as_slice());
             } else {
                 return false;
@@ -1016,7 +1082,7 @@ impl Model {
         let Work { rr, rf, v, ev, s: y, yn, dy, fx, f0, k, jf, pivf, y0, lo, up, atol_scale: asc, stats: w_stats, hist, ctl, .. } = w;
         if !(*h > 0.0) { *h = if ctl.h0 > 0.0 { ctl.h0 } else { (1e-6 * (t1 - t).abs()).max(1e-12) }; }
         *h = ctl.lim(*h);
-        self.full_at(hist, rf, v, ev, y, t);
+        self.full_at_solver(hist, rf, v, ev, y, t);
         self.rhs(v, f0);
         if !self.dt.is_empty() {
             fx.fill(0.0);
@@ -1152,7 +1218,7 @@ impl Model {
             *crate_ = 1.0;
             *jage = 0;
             *defer = false;
-            self.full_at(hist, rf, v, ev, y, t);
+            self.full_at_solver(hist, rf, v, ev, y, t);
             jev.copy_from_slice(ev);
         }
         // step size change by `fac`: re-interpolate the differences; the last correction (used only
@@ -1184,7 +1250,7 @@ impl Model {
             let converged = loop {
                 if !*has_lu || (c * *lufac - 1.0).abs() > 0.3 || *nlu >= 20 {
                     if *jage >= 50 && !fresh_jac {
-                        self.full_at(hist, rf, v, ev, yp, tn);
+                        self.full_at_solver(hist, rf, v, ev, yp, tn);
                         jev.copy_from_slice(ev);
                         *jage = 0;
                         fresh_jac = true;
@@ -1220,7 +1286,7 @@ impl Model {
                     old = dn;
                 }
                 if conv || fresh_jac { break conv; }
-                self.full_at(hist, rf, v, ev, yp, tn); // stale Jacobian: refresh once, then retry
+                self.full_at_solver(hist, rf, v, ev, yp, tn); // stale Jacobian: refresh once, then retry
                 jev.copy_from_slice(ev);
                 *jage = 0;
                 *has_lu = false;
@@ -1301,6 +1367,35 @@ impl Model {
             || self.comps.iter().zip(prevc).any(|(&r, &p)| (ra[r as usize] != 0.0) != p)
     }
 
+    /// At a point where the integrator stalls: if a watched comparison or event trigger flips within a tiny Euler
+    /// step along the current derivative (up to 1e-9 relative in time), take that step (the state crosses the
+    /// switch) and return its end time.
+    fn cross_switch(&self, w: &mut Work, t: f64) -> Option<f64> {
+        if self.comps.is_empty() && self.events.is_empty() { return None; }
+        let Work { rr, v, s, f0, yn, ra, prev, prevc, hist, .. } = w;
+        self.rates_at(hist, rr, v, s, t);
+        self.rhs(v, f0);
+        let scale = t.abs().max(1.0);
+        let mut flips = |d: f64, yn: &mut [f64]| {
+            for ((y, &x), &f) in yn.iter_mut().zip(s.iter()).zip(f0.iter()) { *y = x + d * f; }
+            yn.iter().all(|x| x.is_finite()) && self.changed(hist, ra, prev, prevc, yn, t + d)
+        };
+        let (mut lo, mut hi) = (0.0, 16.0 * f64::EPSILON * scale);
+        while !flips(hi, yn) { // double until the switch is bracketed
+            lo = hi;
+            hi *= 2.0;
+            if hi > 1e-9 * scale { return None; }
+        }
+        // then just past it: beyond the switch the Euler step follows the old branch, so overshoot costs accuracy
+        while hi - lo > 4.0 * f64::EPSILON * scale {
+            let mid = 0.5 * (lo + hi);
+            if flips(mid, yn) { hi = mid } else { lo = mid }
+        }
+        flips(hi, yn);
+        s.copy_from_slice(yn);
+        Some(t + hi)
+    }
+
     /// Earliest trigger change inside the last step (ta, tb]: bisection on the active solver's dense output
     /// to ~1e-12 relative in time. Returns the first time at which a trigger has changed.
     fn locate(&self, w: &mut Work, ta: f64, tb: f64, bdf: bool) -> f64 {
@@ -1357,7 +1452,7 @@ impl Model {
     /// Returns None if a cascade does not terminate, else whether any event executed.
     fn events_at(&self, w: &mut Work, t: f64) -> Option<bool> {
         let nx = self.nx;
-        let Work { rr, rf, ra, s, prev, prevc, pend, tmp, hist, rng, .. } = w;
+        let Work { rr, rf, ra, s, prev, prevc, pend, tmp, hist, rng, v, f0, yn, .. } = w;
         let mut fired = false;
         for _ in 0..10_000 {
             self.aux_at(hist, ra, s, t);
@@ -1375,7 +1470,22 @@ impl Model {
             }
             let pr = |e: usize| self.events[e].prio.map_or(0.0, |r| ra[r as usize]);
             let due: Vec<usize> = (0..pend.len()).filter(|&i| pend[i].0 <= t).collect();
-            if due.is_empty() { return Some(fired) }
+            if due.is_empty() {
+                // CVODE deactivates a root function that is exactly 0 at a restart until it leaves 0. Likewise an
+                // event whose assignments leave the state on a trigger's boundary (`at V < 0: V = 0` while V' < 0)
+                // counts that trigger as still true: it must turn false, then true again, to fire. Otherwise it
+                // fires again at every step from then on, ever shorter (BIOMD0000000711)
+                if fired {
+                    self.rates_at(hist, rr, v, s, t);
+                    self.rhs(v, f0);
+                    let dt = 1e-12 * t.abs().max(1.0);
+                    for ((y, &x), &d) in yn.iter_mut().zip(s.iter()).zip(f0.iter()) { *y = x + dt * d; }
+                    self.aux_at(hist, ra, yn, t + dt);
+                    for (e, ev) in self.events.iter().enumerate() { if ra[ev.trig as usize] != 0.0 { prev[e] = true; } }
+                    self.aux_at(hist, ra, s, t); // registers back at (s, t)
+                }
+                return Some(fired);
+            }
             let top = due.iter().map(|&i| pr(pend[i].1)).fold(f64::NEG_INFINITY, f64::max);
             let tied: Vec<usize> = due.into_iter().filter(|&i| pr(pend[i].1) == top || top.is_nan()).collect();
             // equal explicit priorities: uniformly random (SBML L3); otherwise document order
@@ -1550,7 +1660,7 @@ impl Model {
         w.rows.1.clear();
         if self.alg.contains(&true) { return self.simulate_dae(w, times, rtol, atol, outs, out, step_out.map(|(t, _)| t)); }
         let (no, nt) = (outs.len(), times.len());
-        let ev = self.has_events();
+        let ev = self.has_events() || !self.comps.is_empty(); // events, or switches in rate laws to stop at
         let tend = times[nt - 1];
         let mut t = times[0];
         // Prefer the one-step method in nonstiff mode. The stiff default uses BDF at tight
@@ -1558,6 +1668,7 @@ impl Model {
         let mut bdf = !w.ctl.nonstiff && (rtol < BDF_BELOW_RTOL || (1..BDF_MAX).contains(&w.ctl.max_order));
         let dl = !self.dly.is_empty(); // delay(): one-step Rodas4, steps no longer than the shortest delay
         if dl { bdf = false; }
+        let bdf0 = bdf;
         let mut h = step_out.as_ref().map_or(0.0, |(_, h)| **h);
         if h == 0.0 { w.bdf.order = 0; }
         if ev {
@@ -1571,11 +1682,26 @@ impl Model {
         let (mut q, mut n) = (0, 0); // n: steps since the last output
         if !self.push_row(w, t, outs) { return true; }
         for _ in 0..MAX_STEPS * 10 {
-            while q < nt && times[q] <= t { self.record(w, t, outs, &mut out[q * no..(q + 1) * no]); q += 1; n = 0; }
+            // times[q] < t only for an output at a breakpoint, two ulps behind the clock
+            while q < nt && times[q] <= t { self.record(w, times[q], outs, &mut out[q * no..(q + 1) * no]); q += 1; n = 0; }
             if q == nt { return true; }
             n += 1;
             if n > w.ctl.step_limit() { return false; }
             let mut t1 = self.next_event_time(w, tend);
+            if self.eq_trig && q < nt && times[q] > t { t1 = t1.min(times[q]); }
+            // a time breakpoint b: the step stops just short of it (at b itself `time >= 21` is already true, and a
+            // step ending there sees the switched rates at its end and never passes its error test); the clock then
+            // moves two ulps on, past the switch for > and >= alike, and the integrator restarts (see below)
+            let mut brk = f64::NAN;
+            if !self.tbreak.is_empty() {
+                let Work { ra, s, hist, .. } = w;
+                self.aux_at(hist, ra, s, t);
+                let after = t + 1e-14 * t.abs().max(1.0);
+                for &r in &self.tbreak {
+                    let b = ra[r as usize];
+                    if b > after && b.next_down() < t1 { t1 = b.next_down(); brk = t1; }
+                }
+            }
             // Clip at the delay boundary even when the solver's requested minimum is larger.
             if dl {
                 let cap = self.delay_cap(w, t);
@@ -1588,11 +1714,35 @@ impl Model {
                 w.stats[3] += 1;
                 step = self.step(w, t, t1, &mut h, rtol, atol);
             }
-            let Some(tn) = step else { return false };
+            let Some(tn) = step else {
+                // stalled just short of a switch: every trial step across it was rejected (its jump h * df fails the
+                // error test when the state it feeds is near 0, and switches are only checked after accepted steps).
+                // Cross with an Euler step of a few ulps to just past the switch, then restart there
+                let Some(tx) = self.cross_switch(w, t) else { return false };
+                t = tx;
+                bdf = bdf0;
+                w.bdf.order = 0;
+                h = 0.0;
+                n = 0;
+                if ev && self.events_at(w, t).is_none() { return false; }
+                self.hist_push(w, t);
+                if !self.push_row(w, t, outs) { return true; }
+                continue;
+            };
             let mut te = tn;
             if ev {
                 let Work { ra, s, prev, prevc, hist, .. } = w;
                 if self.changed(hist, ra, prev, prevc, s, tn) { te = self.locate(w, t, tn, bdf); }
+                // An event located within root-finding precision after an output time, with its trigger already
+                // true there (`time >= 15` with an output at 15), happens at that output time: the output reports
+                // the post-event state, as libroadrunner and COPASI do, not the state just before it.
+                let p = q + times[q.min(nt)..].partition_point(|&x| x < te); // the last output time before te: p - 1
+                if p > q && times[p - 1] > t && te - times[p - 1] <= 4e-12 * tn.abs().max(tn - t) {
+                    let tq = times[p - 1];
+                    if bdf { self.bdf_interp(w, tq) } else { self.dense_coef(w); self.interp(w, (tq - t) / (tn - t)) }
+                    let Work { yn, ra, prev, prevc, hist, .. } = w;
+                    if self.changed(hist, ra, prev, prevc, yn, tq) { te = tq; }
+                }
             }
             if q < nt && times[q] < te && !w.ctl.multi { // interior output points from the dense output
                 if !bdf { self.dense_coef(w); }
@@ -1613,6 +1763,10 @@ impl Model {
                 if !self.integrate(w, t, te, &mut h2, rtol, atol) { return false; }
             }
             t = te;
+            // past a breakpoint: from b - 1 ulp to b + 1 ulp (a step starting before the switch carries a jump its
+            // error test can only pass with a step under one ulp), then restart as after an event (one BDF step
+            // across a whole pulse window evaluates the rates only at its end, and its error estimate misses the pulse)
+            if t == brk { t = t.next_up().next_up(); w.bdf.order = 0; h = 0.0; }
             self.hist_push(w, t);
             if !self.push_row(w, t, outs) { return true; } // variable steps: the row before the events
             if ev {
@@ -1681,7 +1835,7 @@ impl Model {
             };
             let jac = |x: &[f64], _p: &[f64], t: f64, u: &[f64], y: &mut [f64]| {
                 let (mut v, mut ev) = (v.borrow_mut(), ev.borrow_mut());
-                self.full_at(&hs, &mut rf.borrow_mut(), &mut v, &mut ev, x, t);
+                self.full_at_solver(&hs, &mut rf.borrow_mut(), &mut v, &mut ev, x, t);
                 y.fill(0.0);
                 for &(d, e, c) in &self.jfull {
                     let (i, k) = (d as usize / nx, d as usize % nx);
@@ -2292,4 +2446,8 @@ mod tests {
 impl Model {
     /// Tape computing the rate vector v (outs, nv) from registers [state | params | time].
     pub fn rates_tape(&self) -> &Tape { &self.rates }
+    /// The aux tape (assignment rules, reaction rates, event expressions; `outputs` index its registers).
+    pub fn aux_tape(&self) -> &Tape { &self.aux }
+    /// Tape computing the rates and every nonzero Jacobian entry (the solvers' main tape; for benchmarks).
+    pub(crate) fn full_tape(&self) -> &Tape { &self.full }
 }
