@@ -127,30 +127,42 @@ libroadrunner 2.9.1. Reproduce: `python benchmarks/bench_stiff.py`, `python benc
 Against a tight-tolerance reference (rtol 1e-10), roadrunner_nitro's default-tolerance error was equal to or
 smaller than libroadrunner's on every model (Oregonator 2.5e-3 vs 4.0e-3; chain 3.4e-6 vs 6.3e-6).
 
-### Scaling with model size (random networks)
+### Scaling with model size
 
-Random mass-action networks (uni/bi reactions, seeded), same SBML to both engines, default tolerances,
-simulate(0, 50, 501); medians of repeats after a warm-up; Windows, libroadrunner 2.11. Reproduce:
-`python benchmarks/bench_scaling.py --plot`. Ratios are libroadrunner / roadrunner_nitro.
+Reproduce: `python benchmarks/bench_scaling.py --plot` (`--sweep chain|reactions|species`). Same SBML to both
+engines, default tolerances, simulate(0, 50, 501), Windows. Each load is timed cold, with no other instance of the
+model alive: libroadrunner reuses the compiled code of a live instance of the same SBML, so a load timed while one
+exists measures almost nothing (an earlier version of this benchmark did that and understated libroadrunner's load
+times by up to 1000x). Simulate = median of 10 repeats after resetAll. Ratios are libroadrunner / roadrunner_nitro.
 
-| Species | Reactions | Load, libroadrunner | Load, nitro | Ratio | Simulate, libroadrunner | Simulate, nitro | Ratio |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 20 | 20 | 4.5 ms | 0.92 ms | 4.9x | 2.6 ms | 0.41 ms | 6.3x |
-| 20 | 100 | 23 ms | 3.4 ms | 6.9x | 2.7 ms | 0.58 ms | 4.7x |
-| 20 | 300 | 101 ms | 13 ms | 8.1x | 2.8 ms | 0.89 ms | 3.2x |
-| 20 | 800 | 505 ms | 36 ms | 14.2x | 3.6 ms | 1.6 ms | 2.2x |
-| 10 | 30 | 6.4 ms | 1.1 ms | 6.0x | 2.4 ms | 0.28 ms | 8.7x |
-| 50 | 150 | 38 ms | 5.2 ms | 7.3x | 4.9 ms | 2.2 ms | 2.3x |
-| 100 | 300 | 103 ms | 13 ms | 8.2x | 15 ms | 10 ms | 1.5x |
-| 200 | 600 | 306 ms | 42 ms | 7.2x | 44 ms | 37 ms | 1.2x |
-| 400 | 1200 | 1064 ms | 189 ms | 5.6x | 293 ms | 252 ms | 1.2x |
+**Linear chains with reversible Michaelis-Menten rate laws** (`$Xo -> S1 -> ... -> $X1`, as teUtils'
+`getLinearChain(n, 'Michaelis')`), against libroadrunner 2.9.1:
 
-The load advantage grows with the number of reactions (LLVM compile time). The simulation advantage is
-largest for small models and shrinks to ~1.2x at 100+ species, where the stiff solver's linear algebra rather
-than rate-law evaluation dominates: the place to look for further speed on large models. Through Tellurium
-(`te.loada`, which adds libantimony's Antimony conversion) a 200-species, 300-reaction teUtils network took
-3.1 s to load against 37 ms for roadrunner_nitro (Antimony conversion included), and 22 ms against 6.0 ms
-to simulate.
+| Reactions | Load, libroadrunner | Load, nitro | Ratio | Simulate, libroadrunner | Simulate, nitro | Ratio |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 10 | 97 ms | 1.2 ms | 83x | 2.3 ms | 0.23 ms | 10.3x |
+| 20 | 207 ms | 2.2 ms | 93x | 2.6 ms | 0.47 ms | 5.4x |
+| 50 | 1.19 s | 5.5 ms | 215x | 4.6 ms | 0.94 ms | 4.9x |
+| 100 | 7.53 s | 12 ms | 616x | 10.2 ms | 1.8 ms | 5.6x |
+| 200 | 32.7 s | 26 ms | 1281x | 31.1 ms | 4.0 ms | 7.7x |
+| 500 | 258 s | 92 ms | 2801x | 184 ms | 14 ms | 13.2x |
+| 1000 | (not run) | 413 ms | | (not run) | 22 ms | |
+
+libroadrunner's load (LLVM compilation) grows much faster than the model: 4.3 minutes for a 500-reaction chain,
+against 92 ms. On these sparse models the simulation advantage grows with size, to 13x at 500 reactions.
+
+**Random mass-action networks**: being re-measured with cold loads (the earlier table's libroadrunner load
+times were warm). Its simulation times stand: roadrunner_nitro 6-9x faster on small networks, falling to ~1.2x at
+100+ species and three reactions per species, where the stiff solver's dense linear algebra dominates: the place
+to look for further speed on large, densely connected models.
+
+Through Tellurium (`te.loada`, libroadrunner 2.9.1, Antimony conversion included on both sides) a 200-species,
+300-reaction teUtils random network took 3.1 s to load against 37 ms for roadrunner_nitro, and 22 ms against
+6.0 ms to simulate.
+
+`getFullJacobian` (rarely used; `--jacobian` times it): libroadrunner 2.11.0 is ~30x slower than 2.9.1 at 100
+chain reactions (35 s against 1.1 s, identical Config defaults; its getReducedJacobian stays fast), reported to
+the libroadrunner developers. roadrunner_nitro's exact Jacobian: 0.06 ms at 100 reactions.
 
 ## 3. Correctness against independent references
 
