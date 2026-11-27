@@ -7,6 +7,8 @@
 pub mod optimize;
 pub mod petab;
 pub mod problem;
+#[cfg(feature = "python")]
+pub mod py;
 pub mod trf;
 
 pub use optimize::{fisher, fit, FitOptions, FitResult, Fisher, StartResult};

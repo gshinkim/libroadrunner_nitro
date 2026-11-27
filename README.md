@@ -116,6 +116,34 @@ The method names are libroadrunner's: `simulate`, `steadyState`, `getCC`, `getVa
 `getFloatingSpeciesIds`, `getReactionRates`, `reset`, and so on. One difference: functions that return a matrix
 (for example the Jacobian or the stoichiometry matrix) give back three things, `(array, row names, column names)`.
 
+### Fit a model to data (parameter estimation, in development)
+
+`roadrunner_nitro.fit` estimates parameters from data: exact gradients, multistart least squares, and confidence
+intervals. It reads [PEtab](https://petab.readthedocs.io) problems, or you build the problem in Python:
+
+```python
+from roadrunner_nitro import fit
+
+p = fit.Problem.from_petab('problem.yaml')     # or build it by hand, below
+
+p = fit.Problem(sbml)                          # the model above
+p.add_parameter('k1', scale='log10', lower=1e-3, upper=1e3, nominal=1)
+p.add_parameter('k2', scale='log10', lower=1e-3, upper=1e3, nominal=1)
+p.add_condition('normal')                      # the model as it is
+p.add_condition('half', {'X0': 5})             # an experiment with X0 changed
+p.add_observable('S1_obs', 'S1', noise_formula='0.1')
+p.add_measurements('normal', 'S1_obs', times, values)   # your data
+p.add_measurements('half', 'S1_obs', times, values_half)
+
+r = p.fit(n_starts=20)                         # fits from 20 starting points, on all cores
+print(r)                                       # best parameters, and how many starts found them
+print(p.fisher(r.best))                        # 95% confidence intervals
+```
+
+The same fitting is in the C library through `rrc_fit.h` (see `capi/examples/fit.c`). This is stage 1 of the
+work: models with events, PEtab placeholders, pre-equilibration and priors come later and are refused with a
+clear error until then.
+
 ---
 
 ## Use it from C and other languages (the C library)

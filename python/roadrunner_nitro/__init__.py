@@ -7,6 +7,7 @@
 The raw engine binding (plain arrays, no wrappers) is ``roadrunner_nitro.core``.
 """
 from . import core
+from . import fit  # parameter estimation: roadrunner_nitro.fit
 from .config import Config, Logger, SelectionRecord
 from .model import ExecutableModel
 from .named_array import NamedArray

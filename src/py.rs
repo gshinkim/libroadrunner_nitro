@@ -607,6 +607,7 @@ fn sbml_edit(op: &str, sbml: &str, args: &Bound<'_, pyo3::types::PyTuple>) -> Py
 fn roadrunner_nitro(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(simulate_fixed, m)?)?;
     crate::sens::register(m)?;
+    crate::fit::py::register(m)?;
     m.add_function(wrap_pyfunction!(antimony_to_sbml, m)?)?;
     m.add_function(wrap_pyfunction!(flatten_comp, m)?)?;
     m.add_function(wrap_pyfunction!(eigenvalues, m)?)?;
