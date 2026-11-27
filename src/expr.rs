@@ -278,9 +278,9 @@ pub(crate) fn lex(s: &str) -> Result<Vec<Tok>, String> {
     Ok(out)
 }
 
-struct P<'a, F: FnMut(&str) -> Option<Op>> { t: Vec<Tok>, i: usize, d: &'a mut Dag, res: F }
+struct P<'a, F: FnMut(&str) -> Option<Sym>> { t: Vec<Tok>, i: usize, d: &'a mut Dag, res: F }
 
-impl<'a, F: FnMut(&str) -> Option<Op>> P<'a, F> {
+impl<'a, F: FnMut(&str) -> Option<Sym>> P<'a, F> {
     fn peek(&self, s: &str) -> bool { matches!(self.t.get(self.i), Some(Tok::Sym(x)) if *x == s) }
     fn eat(&mut self, s: &str) -> bool { let m = self.peek(s); if m { self.i += 1; } m }
     fn expect(&mut self, s: &str) -> Result<(), String> {
@@ -349,7 +349,11 @@ impl<'a, F: FnMut(&str) -> Option<Op>> P<'a, F> {
                 self.call(&name, args)
             }
             Tok::Id(name) => { // a model symbol first: SBML ids may be named INF, pi, ...
-                if let Some(op) = (self.res)(&name) { return Ok(self.d.mk(op)); }
+                match (self.res)(&name) {
+                    Some(Sym::Op(op)) => return Ok(self.d.mk(op)),
+                    Some(Sym::Node(n)) => return Ok(n),
+                    None => {}
+                }
                 let c = match name.as_str() {
                     "true" => 1.0, "false" => 0.0, "pi" => std::f64::consts::PI,
                     "exponentiale" => std::f64::consts::E, "infinity" | "INF" | "inf" => f64::INFINITY,
@@ -482,7 +486,15 @@ fn rel(op: &str, a: N, c: N) -> Op {
 }
 
 /// Parse an infix formula into `dag`; `res` maps identifiers to Var/Par/Time.
-pub fn parse(src: &str, dag: &mut Dag, res: impl FnMut(&str) -> Option<Op>) -> Result<N, String> {
+pub fn parse(src: &str, dag: &mut Dag, mut res: impl FnMut(&str) -> Option<Op>) -> Result<N, String> {
+    parse_sym(src, dag, |n| res(n).map(Sym::Op))
+}
+
+/// What a name resolves to in `parse_sym`: a leaf op, or a node already in the DAG (a substituted formula).
+pub enum Sym { Op(Op), Node(N) }
+
+/// `parse` with names resolved to leaf ops or to existing nodes.
+pub fn parse_sym(src: &str, dag: &mut Dag, res: impl FnMut(&str) -> Option<Sym>) -> Result<N, String> {
     let mut p = P { t: lex(src)?, i: 0, d: dag, res };
     let r = p.or()?;
     if p.i != p.t.len() { return Err(format!("trailing input in '{src}'")); }

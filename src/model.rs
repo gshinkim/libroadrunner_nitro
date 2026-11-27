@@ -2446,6 +2446,8 @@ mod tests {
 impl Model {
     /// Tape computing the rate vector v (outs, nv) from registers [state | params | time].
     pub fn rates_tape(&self) -> &Tape { &self.rates }
+    /// The aux tape (assignment rules, reaction rates, event expressions; `outputs` index its registers).
+    pub fn aux_tape(&self) -> &Tape { &self.aux }
     /// Tape computing the rates and every nonzero Jacobian entry (the solvers' main tape; for benchmarks).
     pub(crate) fn full_tape(&self) -> &Tape { &self.full }
 }
