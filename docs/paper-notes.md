@@ -172,6 +172,19 @@ number. The simulation advantage is largest for small networks and falls to ~1.2
 reactions per species, where the stiff solver's dense linear algebra dominates: the place to look for further
 speed on large, densely connected models.
 
+*Why the advantage narrows on large dense networks* (profiled, 400 species, 1200 reactions, one 260 ms
+simulation, 1494 BDF steps): LU factorization of the Newton matrix 76% (46 factorizations, 198 ms), linear
+solves 20% (654 solves, 51 ms), rate-law evaluation 1% (2.7 ms), Jacobian evaluation <0.1% (11 evaluations,
+0.12 ms). The Jacobian is sparse (5686 entries, 3.6% of 400 x 400), but its LU fills in to 36% (57,272 entries)
+under the fill-reducing minimum-degree order: random networks have no structure for sparse elimination to
+exploit. Both engines therefore do essentially the same dense linear algebra (CVODE in libroadrunner uses a dense
+LU), and roadrunner_nitro's advantages, model evaluation and the exact Jacobian, are ~1% of the time. Measured
+per 400 x 400 factorization: roadrunner_nitro's sparse LU at 36% fill 4.3 ms, nalgebra dense LU 4.5 ms, faer
+dense LU 2.0 ms single-threaded (multi-threaded slower at this size). Switching to faer above a fill threshold
+would roughly halve factorization time (estimated 1.7-2x against libroadrunner at 400 species instead of 1.2x);
+not pursued. On sparse structures (pathways, chains) the fill stays low and the advantage grows with size
+(13x at 500 chain reactions); most biochemical models are closer to that end.
+
 Through Tellurium (`te.loada`, libroadrunner 2.9.1, Antimony conversion included on both sides) a 200-species,
 300-reaction teUtils random network took 3.1 s to load against 37 ms for roadrunner_nitro, and 22 ms against
 6.0 ms to simulate.
