@@ -11,3 +11,7 @@ crate-type = ["cdylib"]
 [dependencies]
 roadrunner_nitro = { path = ".." }
 libc = "0.2"
+
+[dev-dependencies]
+# test models written in Antimony
+antimony = { package = "antimony-rs", path = "../crates/antimony", features = ["sbml"] }

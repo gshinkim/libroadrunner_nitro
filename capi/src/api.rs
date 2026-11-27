@@ -308,7 +308,7 @@ fn panic_text(p: Box<dyn std::any::Any + Send>) -> String {
 
 /// Run `f` (no panic crosses the FFI); an error is recorded as upstream's catch macros do
 /// ("RoadRunner exception: <what>\n") and `fail` returned.
-fn run<T>(fail: T, f: impl FnOnce() -> R<T>) -> T {
+pub(crate) fn run<T>(fail: T, f: impl FnOnce() -> R<T>) -> T {
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(Ok(v)) => v,
         Ok(Err(e)) => { set_error(format!("RoadRunner exception: {e}\n")); fail }
@@ -316,7 +316,7 @@ fn run<T>(fail: T, f: impl FnOnce() -> R<T>) -> T {
     }
 }
 
-unsafe fn inst<'a>(h: RRHandle) -> R<&'a mut Inst> {
+pub(crate) unsafe fn inst<'a>(h: RRHandle) -> R<&'a mut Inst> {
     (h as *mut Inst).as_mut().ok_or_else(|| "Failed to cast to a valid RoadRunner handle".to_string())
 }
 
@@ -334,7 +334,7 @@ unsafe fn wm<T>(h: RRHandle, fail: T, f: impl FnOnce(&mut RoadRunner) -> R<T>) -
 }
 
 /// A C string argument.
-unsafe fn st(p: *const c_char) -> R<String> { cstr(p).ok_or_else(|| "NULL string argument".to_string()) }
+pub(crate) unsafe fn st(p: *const c_char) -> R<String> { cstr(p).ok_or_else(|| "NULL string argument".to_string()) }
 
 /// Write an out-argument.
 unsafe fn out<T>(p: *mut T, v: T) -> R<bool> {

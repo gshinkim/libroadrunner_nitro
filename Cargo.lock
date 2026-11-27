@@ -1385,6 +1385,7 @@ dependencies = [
 name = "roadrunner_nitro_c_api"
 version = "1.0.0-rc.2"
 dependencies = [
+ "antimony-rs",
  "libc",
  "roadrunner_nitro",
 ]
