@@ -559,33 +559,6 @@ impl Problem {
         // A switch time in a rate law that depends on an estimated parameter: moving the switch moves the trajectory,
         // which forward sensitivities only capture with a jump at the switch (not implemented yet). Refused rather
         // than give a silently wrong gradient.
-        // every comparison inside the rate laws (rules they use included): one involving time and a parameter that
-        // depends on an estimated one is a switch whose time moves with that parameter (`time > t1`, `time - tau < 0`)
-        {
-            let mut d2 = Dag::default();
-            let leaves: Vec<N> = (0..nx + np).map(|r| d2.mk(Op::Var(r as u32))).collect();
-            let t = d2.mk(Op::Time);
-            let rt = m.rates_tape();
-            let node = lift_tape(rt, &mut d2, &leaves, t);
-            let mut stack: Vec<N> = rt.outs.iter().map(|&r| node[r as usize]).collect();
-            let mut seen = HashSet::new();
-            while let Some(nd) = stack.pop() {
-                if !seen.insert(nd) { continue; }
-                let op = d2.nodes[nd as usize];
-                if matches!(op, Op::Lt(..) | Op::Le(..) | Op::Eq(..) | Op::Ne(..)) {
-                    let mut has_t = false;
-                    let vars = d2.deps(nd, &mut has_t);
-                    if has_t {
-                        if let Some(k) = vars.iter().map(|&v| v as usize).find(|&k| k >= nx && dep[k - nx]) {
-                            return Err(format!("parameter '{}' sets the time of a switch in the model (a piecewise or comparison with time) \
-                                                and depends on an estimated parameter: exact gradients across such switches are not supported yet",
-                                               m.pnames[k - nx]));
-                        }
-                    }
-                }
-                stack.extend(crate::expr::children(&op).iter().flatten());
-            }
-        }
         // least squares: normal noise, noise depending on no state and no free parameter
         let mut least_squares = def.observables.iter().all(|o| o.noise == Noise::Normal);
         let is_free = |s: &Slot| matches!(s, Slot::Par(j, _) if def.params[*j].estimate);

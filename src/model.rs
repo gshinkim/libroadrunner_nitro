@@ -255,11 +255,19 @@ pub struct Work {
     pub rows: (Vec<f64>, Vec<f64>),
     /// forward sensitivities integrated with the state (`simulate_sens`)
     pub sens: Option<Box<SensState>>,
+    /// `locate`: the last time before the located change (the other end of the bracket)
+    loc_lo: f64,
 }
 
 /// Parameter derivatives of the rates, for forward sensitivities (crate::sens::sens_setup): one tape giving every
 /// nonzero d v_j / d p_{ks[q]} from registers [x | params | time]; `at[m]` = (j, q) of output m.
-pub struct SensSetup { pub ks: Vec<usize>, pub(crate) tape: Tape, pub(crate) at: Vec<(u32, u32)> }
+/// `sw`: per watched comparison a < b (Model::watched_comparisons, in order), g = a - b and its nonzero derivatives,
+/// one tape over the same registers; `sw_at[m]` = (comparison, what) of each derivative output after the g values,
+/// what = state i, nx + q for parameter ks[q], or u32::MAX for time.
+pub struct SensSetup {
+    pub ks: Vec<usize>, pub(crate) tape: Tape, pub(crate) at: Vec<(u32, u32)>,
+    pub(crate) sw: Tape, pub(crate) sw_at: Vec<(u32, u32)>,
+}
 
 /// Forward sensitivities along `nd` directions, integrated with the state by its BDF steps (the staggered direct
 /// method, as CVODES): direction f solves ds/dt = J(x) s + sum_q c[f][q] df/dp_{ks[q]}, after each accepted state
@@ -280,6 +288,8 @@ pub struct SensState {
     jf: Vec<f64>, piv: Vec<usize>, lo: Vec<(u32, u32, f64)>, up: Vec<(u32, u32, f64)>,
     // per direction: predictor, psi, right-hand side / correction (nd x nx each), rate derivatives (nd x nv)
     yp: Vec<f64>, psi: Vec<f64>, r: Vec<f64>, b: Vec<f64>, wv: Vec<f64>, tmp: Vec<f64>,
+    // switches: switch-tape registers, g's derivatives (x, ks, t) of the flipped comparison
+    swr: Vec<f64>, gx: Vec<f64>, gp: Vec<f64>,
     failed: bool,
 }
 
@@ -849,7 +859,7 @@ impl Model {
             yn: z(nx), dy: z(nx), fx: z(nx), f0: z(nx), k: std::array::from_fn(|_| z(nx)), jf: z(nx * nx), pivf: vec![0; nx],
             lo: vec![], up: vec![], xm: z(ni * nr),
             ra: self.aux.regs(), y0: z(nx), d1: z(nx), d2: z(nx), prev: vec![false; self.events.len()], prevc: vec![false; self.comps.len()],
-            pend: vec![], tmp: vec![], amt: z(nx), atol_scale: vec![1.0; nx], stats: [0; 4], ctl: Ctl::default(), rows: (vec![], vec![]), sens: None,
+            pend: vec![], tmp: vec![], amt: z(nx), atol_scale: vec![1.0; nx], stats: [0; 4], ctl: Ctl::default(), rows: (vec![], vec![]), sens: None, loc_lo: 0.0,
             bdf: Bdf { d: z((BDF_MAX + 3) * nx), jev: z(self.jac.len() + self.dt.len()), sc: std::array::from_fn(|_| z(nx)), ..Default::default() },
             hist: Hist { rd: Mutex::new(self.dtape.regs()), yt: Mutex::new(z(nx)), ..Default::default() },
             rng: Rng::new(0x5eed_e7e7),
@@ -1492,6 +1502,7 @@ impl Model {
             let Work { yn, ra, prev, prevc, hist, .. } = w;
             if self.changed(hist, ra, prev, prevc, yn, ta + th * (tb - ta)) { hi = th } else { lo = th }
         }
+        w.loc_lo = ta + lo * (tb - ta);
         if hi == 1.0 { tb } else { ta + hi * (tb - ta) }
     }
 
@@ -1809,6 +1820,7 @@ impl Model {
                 // error test when the state it feeds is near 0, and switches are only checked after accepted steps).
                 // Cross with an Euler step of a few ulps to just past the switch, then restart there
                 let Some(tx) = self.cross_switch(w, t) else { return false };
+                if sens { self.sens_jump(w, t, tx, true); } // w.f0: the rates before the crossing
                 t = tx;
                 bdf = bdf0;
                 w.bdf.order = 0;
@@ -1820,9 +1832,10 @@ impl Model {
                 continue;
             };
             let mut te = tn;
+            let mut cross = f64::NAN; // sensitivities: the time just before a switch crossed in this step
             if ev {
                 let Work { ra, s, prev, prevc, hist, .. } = w;
-                if self.changed(hist, ra, prev, prevc, s, tn) { te = self.locate(w, t, tn, bdf); }
+                if self.changed(hist, ra, prev, prevc, s, tn) { te = self.locate(w, t, tn, bdf); cross = w.loc_lo; }
                 // An event located within root-finding precision after an output time, with its trigger already
                 // true there (`time >= 15` with an output at 15), happens at that output time: the output reports
                 // the post-event state, as libroadrunner and COPASI do, not the state just before it.
@@ -1859,7 +1872,8 @@ impl Model {
             // past a breakpoint: from b - 1 ulp to b + 1 ulp (a step starting before the switch carries a jump its
             // error test can only pass with a step under one ulp), then restart as after an event (one BDF step
             // across a whole pulse window evaluates the rates only at its end, and its error estimate misses the pulse)
-            if t == brk { t = t.next_up().next_up(); w.bdf.order = 0; h = 0.0; }
+            if t == brk { cross = brk; t = t.next_up().next_up(); w.bdf.order = 0; h = 0.0; }
+            if sens && !cross.is_nan() { self.sens_jump(w, cross, t, false); }
             self.hist_push(w, t);
             if !self.push_row(w, t, outs) { return true; } // variable steps: the row before the events
             if ev {
@@ -2546,9 +2560,12 @@ impl Model {
         let z = |n: usize| vec![0.0; n];
         let mut pt = setup.tape.regs();
         setup.tape.prep(&mut pt);
+        let mut swr = setup.sw.regs();
+        setup.sw.prep(&mut swr);
         SensState { setup, nd, s: z(nd * nx), c: z(nd * nk), out: vec![], nk, ds: z(nd * (BDF_MAX + 3) * nx), pt,
                     jf: z(nx * nx), piv: vec![0; nx], lo: vec![], up: vec![], yp: z(nd * nx), psi: z(nd * nx), r: z(nd * nx),
-                    b: z(nd * nx), wv: z(nd * self.nv), tmp: z(BDF_MAX + 3), failed: false }
+                    b: z(nd * nx), wv: z(nd * self.nv), tmp: z(BDF_MAX + 3),
+                    swr, gx: z(nx), gp: z(nk), failed: false }
     }
 
     /// `simulate` with forward sensitivities (w.sens set; its `s` holds s(t0)): on success w.sens.out holds s at
@@ -2590,6 +2607,60 @@ impl Model {
         } else {
             b.chunks_mut(nx).zip(wv.chunks_mut(nv)).enumerate().for_each(one);
         }
+    }
+
+    /// A switch crossed between t_lo (just before) and t (the state w.s, continuous across it): each direction
+    /// jumps by (f- - f+) dtau, dtau = -(g_x s + g_p c) / (g_x f- + g_t) for the comparison g = a - b that flipped
+    /// (zero when the rates do not jump). The BDF differences shift with it, so the state's steps are unchanged.
+    /// `fminus`: w.f0 already holds the rates before the crossing (else they come from the interpolant at t_lo).
+    fn sens_jump(&self, w: &mut Work, t_lo: f64, t: f64, fminus: bool) {
+        let (nx, np) = (self.nx, self.pnames.len());
+        // which watched comparison flipped (prevc: the values before the crossing)
+        {
+            let Work { ra, s, hist, .. } = &mut *w;
+            self.aux_at(hist, ra, s, t);
+        }
+        let Some(q) = (0..self.comps.len()).find(|&q| (w.ra[self.comps[q] as usize] != 0.0) != w.prevc[q]) else { return };
+        if !fminus {
+            self.bdf_interp(w, t_lo);
+            let Work { rr, v, yn, hist, f0, .. } = &mut *w;
+            self.rates_at(hist, rr, v, yn, t_lo);
+            self.rhs(v, f0);
+        }
+        let Work { rr, v, s, hist, f0, dy, sens, bdf, .. } = &mut *w;
+        self.rates_at(hist, rr, v, s, t); // f+ (rr: parameters unchanged)
+        self.rhs(v, dy);
+        let Some(st) = sens.as_deref_mut() else { return };
+        let setup = st.setup.clone();
+        // g's derivatives for comparison q at (x, t)
+        st.swr[..nx].copy_from_slice(s);
+        st.swr[nx..nx + np].copy_from_slice(&rr[nx..nx + np]);
+        st.swr[nx + np] = t;
+        setup.sw.run(&mut st.swr);
+        st.gx.fill(0.0);
+        st.gp.fill(0.0);
+        let mut gt = 0.0;
+        let nc = self.comps.len();
+        for (m, &(c, what)) in setup.sw_at.iter().enumerate() {
+            if c as usize != q { continue; }
+            let d = st.swr[setup.sw.outs[nc + m] as usize];
+            match what { u32::MAX => gt = d, i if (i as usize) < nx => st.gx[i as usize] = d, i => st.gp[i as usize - nx] = d }
+        }
+        let den: f64 = (0..nx).map(|i| st.gx[i] * f0[i]).sum::<f64>() + gt;
+        if !(den.abs() > 0.0) || !den.is_finite() { st.failed = true; return; } // a tangential crossing: no defined jump
+        let stride = st.stride(nx);
+        for f in 0..st.nd {
+            let num: f64 = (0..nx).map(|i| st.gx[i] * st.s[f * nx + i]).sum::<f64>()
+                + (0..st.nk).map(|k| st.gp[k] * st.c[f * st.nk + k]).sum::<f64>();
+            let dtau = -num / den;
+            if dtau == 0.0 { continue; }
+            for i in 0..nx {
+                let j = (f0[i] - dy[i]) * dtau;
+                st.s[f * nx + i] += j;
+                st.ds[f * stride + i] += j; // the history shifts with the jump (differences unchanged)
+            }
+        }
+        let _ = bdf;
     }
 
     /// BDF (re)start: differences [s, h s'] per direction.
@@ -2652,6 +2723,8 @@ impl Model {
     /// Aux registers of the time breakpoints: switch times in rate laws (`piecewise(x, time > t1, y)`), each an
     /// expression of parameters only.
     pub fn time_breakpoints(&self) -> &[u32] { &self.tbreak }
+    /// Aux registers of every comparison watched as a switch (in triggers and rate laws, rules they use included).
+    pub fn watched_comparisons(&self) -> &[u32] { &self.comps }
     /// Tape computing the rates and every nonzero Jacobian entry (the solvers' main tape; for benchmarks).
     pub(crate) fn full_tape(&self) -> &Tape { &self.full }
 }

@@ -195,7 +195,40 @@ pub fn sens_setup(m: &Model, ks: &[usize]) -> crate::model::SensSetup {
             if dag.val(d) != Some(0.0) { at.push((j as u32, q as u32)); roots.push(d); }
         }
     }
-    crate::model::SensSetup { ks: ks.to_vec(), tape: Tape::new(&dag, &roots, nx + m.pnames.len(), 0), at }
+    let tape = Tape::new(&dag, &roots, nx + m.pnames.len(), 0);
+    // switches: g = a - b for each watched comparison a < b (or <=, ==, !=), with its derivatives
+    let aux = m.aux_tape();
+    let mut d2 = Dag::default();
+    let nl = nx + m.pnames.len();
+    // node of every aux register, over Var leaves [x | params] and Time
+    let mut node = vec![0 as N; aux.nregs];
+    for (r, n) in node.iter_mut().enumerate().take(nl) { *n = d2.mk(Op::Var(r as u32)); }
+    node[nl] = d2.mk(Op::Time);
+    for &(r, x) in &aux.consts { node[r as usize] = d2.cst(x); }
+    for &(dst, op) in aux.pre.iter().chain(&aux.ins) { node[dst as usize] = d2.mk(remap(op, |r| node[r as usize])); }
+    let (mut groots, mut gders, mut sw_at) = (vec![], vec![], vec![]);
+    for (q, &r) in m.watched_comparisons().iter().enumerate() {
+        let g = match d2.nodes[node[r as usize] as usize] {
+            Op::Lt(a, c) | Op::Le(a, c) | Op::Eq(a, c) | Op::Ne(a, c) => d2.mk(Op::Sub(a, c)),
+            _ => d2.cst(0.0),
+        };
+        groots.push(g);
+        let mut has_t = false;
+        for v in d2.deps(g, &mut has_t) {
+            let v = v as usize;
+            let what = if v < nx { Some(v as u32) } else { ks.iter().position(|&k| nx + k == v).map(|q| (nx + q) as u32) };
+            let Some(what) = what else { continue };
+            let d = d2.diff(g, Op::Var(v as u32));
+            if d2.val(d) != Some(0.0) { sw_at.push((q as u32, what)); gders.push(d); }
+        }
+        if has_t {
+            let d = d2.diff(g, Op::Time);
+            if d2.val(d) != Some(0.0) { sw_at.push((q as u32, u32::MAX)); gders.push(d); }
+        }
+    }
+    let all: Vec<N> = groots.into_iter().chain(gders).collect();
+    let sw = Tape::new(&d2, &all, nl, 0);
+    crate::model::SensSetup { ks: ks.to_vec(), tape, at, sw, sw_at }
 }
 
 /// Augmented model for directional sensitivities, compiled once for many directions: states [x | s] with

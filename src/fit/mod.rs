@@ -354,7 +354,8 @@ mod tests {
 
     #[test]
     fn switch_times() {
-        // the inflow switches from k1 to k2 at time tsw: fine while tsw is fixed, refused while it is estimated
+        // the inflow switches from k1 to k2 at time tsw: with tsw estimated the sensitivities jump at the switch
+        // (s+ = s- + (f- - f+) dtau / dp); without the jump the gradient for tsw would be 0
         let ant = "model sw
             compartment C = 1
             species S1 in C
@@ -362,23 +363,48 @@ mod tests {
             J1: S1 -> ; kd*S1
             S1 = 0; k1 = 2; k2 = 0.5; kd = 0.3; tsw = 4.5
         end";
-        let def = |est_tsw: bool| ProblemDef {
-            sbml: sbml(ant),
+        let def = |law: &str| ProblemDef {
+            sbml: sbml(&ant.replace("piecewise(k1, time < tsw, k2)", law)),
             params: vec![par("k1", Scale::Log10, 0.01, 100.0, 2.0, true), par("kd", Scale::Log10, 0.01, 10.0, 0.3, true),
-                         par("tsw", Scale::Lin, 1.0, 9.0, 4.5, est_tsw)],
+                         par("tsw", Scale::Lin, 1.0, 9.0, 4.5, true)],
             conditions: vec![("c".into(), vec![])],
             observables: vec![obs("y", "S1", "0.1", Noise::Normal, Scale::Lin)],
             measurements: TIMES[1..].iter().map(|&t| Measurement { condition: "c".into(), observable: "y".into(), time: t, value: 1.0, ..Default::default() }).collect(),
         };
-        let err = Problem::new(def(true)).err().unwrap();
-        assert!(err.contains("'tsw' sets the time of a switch"), "{err}");
-        // the same switch written as Beer_MolBioSystems2014 writes it: time - tsw < 0
-        let mut d = def(true);
-        d.sbml = sbml(&ant.replace("piecewise(k1, time < tsw, k2)", "piecewise(k1, time - tsw < 0, k2)"));
-        assert!(Problem::new(d).err().unwrap().contains("'tsw' sets the time of a switch"));
-        let mut p = Problem::new(def(false)).unwrap();
+        // the engine's time breakpoint (time < tsw), and the form Beer_MolBioSystems2014 uses (located as a root)
+        for law in ["piecewise(k1, time < tsw, k2)", "piecewise(k1, time - tsw < 0, k2)"] {
+            let mut p = Problem::new(def(law)).unwrap();
+            (p.rtol, p.atol) = (1e-11, 1e-14);
+            let theta = [0.4f64.log10(), 0.2f64.log10(), 4.3];
+            let e = p.evaluate(&theta, true, true).unwrap();
+            assert!(e.grad[2].abs() > 1.0, "{law}: d nllh / d tsw = {}", e.grad[2]);
+            fd_check(&p, &theta, 1e-5);
+        }
+    }
+
+    #[test]
+    fn state_switch() {
+        // the inflow switches when S1 crosses an estimated threshold: the switch time moves with every parameter
+        // through the state, dtau = -(g_x s + g_p) / (g_x f-)
+        let ant = "model ss
+            compartment C = 1
+            species S1 in C, S2 in C
+            J0: -> S1; piecewise(k1, S1 < thr, 0.2*k1)
+            J1: S1 -> S2; kd*S1
+            J2: S2 -> ; 0.5*S2
+            S1 = 0; S2 = 0; k1 = 2; kd = 0.1; thr = 5
+        end";
+        let def = ProblemDef {
+            sbml: sbml(ant),
+            params: vec![par("k1", Scale::Log10, 0.01, 100.0, 2.0, true), par("kd", Scale::Log10, 0.001, 10.0, 0.1, true),
+                         par("thr", Scale::Lin, 1.0, 9.0, 5.0, true)],
+            conditions: vec![("c".into(), vec![])],
+            observables: vec![obs("y1", "S1", "0.1", Noise::Normal, Scale::Lin), obs("y2", "S2", "0.1", Noise::Normal, Scale::Lin)],
+            measurements: TIMES[1..].iter().flat_map(|&t| ["y1", "y2"].map(|o| Measurement { condition: "c".into(), observable: o.into(), time: t, value: 1.0, ..Default::default() })).collect(),
+        };
+        let mut p = Problem::new(def).unwrap();
         (p.rtol, p.atol) = (1e-11, 1e-14);
-        fd_check(&p, &[0.4f64.log10(), 0.2f64.log10()], 1e-5);
+        fd_check(&p, &[2.5f64.log10(), 0.12f64.log10(), 4.0], 1e-5);
     }
 
     #[test]
