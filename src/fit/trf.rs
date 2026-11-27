@@ -36,6 +36,8 @@ pub enum Status {
     FtolXtol,
     /// cancelled by the caller
     Cancelled,
+    /// L-BFGS-B: no step along the search direction decreases the objective, even from steepest descent
+    LineSearch,
 }
 
 impl Status {
@@ -48,6 +50,7 @@ impl Status {
             Status::Xtol => "step small enough (xtol)",
             Status::FtolXtol => "objective change and step small enough (ftol, xtol)",
             Status::Cancelled => "cancelled",
+            Status::LineSearch => "no further decrease along the search direction",
         }
     }
     pub fn converged(self) -> bool { matches!(self, Status::Gtol | Status::Ftol | Status::Xtol | Status::FtolXtol) }

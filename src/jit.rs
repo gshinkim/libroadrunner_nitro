@@ -39,13 +39,24 @@ extern "C" fn tanh(a: f64) -> f64 { a.tanh() }
 extern "C" fn fact(a: f64) -> f64 { crate::expr::factorial(a) }
 extern "C" fn rnd(k: f64, a: f64, b: f64, c: f64, d: f64) -> f64 { crate::rand::draw(k as u8, a, b, c, d) }
 
-/// Compile `ins` (as in `Tape::ins`); registers in `outs` that `ins` writes are stored back.
+/// Tapes longer than this stay interpreted. Every temporary is an SSA value, so a long tape spills most of them and
+/// its stack frame grows with its length (8 bytes a value): beyond about 50 000 instructions the frame could exceed
+/// a worker thread's stack. (Found on Chen_MSB2009's sensitivity model, about 500 species.)
+const MAX_JIT_INS: usize = 50_000;
+
+/// Compile `ins` (as in `Tape::ins`); registers in `outs` that `ins` writes are stored back. None: not compiled
+/// (too long, or the target is not supported); the tape is then interpreted.
 pub fn compile(ins: &[(u32, Op)], outs: &[u32], nregs: usize) -> Option<Jit> {
+    if ins.len() > MAX_JIT_INS { return None; }
     static ISA: OnceLock<Option<OwnedTargetIsa>> = OnceLock::new();
     let isa = ISA.get_or_init(|| {
         let mut fb = settings::builder();
         fb.set("opt_level", "none").ok()?; // the tape is already CSE'd and folded; "speed" runs no faster
         fb.set("enable_verifier", "false").ok()?;
+        // frames over a page touch each page in turn (Windows commits the stack one guard page at a time: a frame
+        // that skips past it is an access violation, not a stack overflow)
+        fb.set("enable_probestack", "true").ok()?;
+        fb.set("probestack_strategy", "inline").ok()?;
         cranelift_native::builder().ok()?.finish(settings::Flags::new(fb)).ok()
     }).clone()?;
     let mut module = JITModule::new(JITBuilder::with_isa(isa, default_libcall_names()));

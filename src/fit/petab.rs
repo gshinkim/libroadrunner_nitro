@@ -164,18 +164,26 @@ fn observables_of(t: &Table) -> Result<Vec<ObservableDef>, String> {
     Ok(out)
 }
 
+/// A placeholder cell: values separated by ';', each a number or a parameter id ("" or "nan": none).
+fn placeholder_values(cell: &str) -> Vec<Value> {
+    let c = cell.trim();
+    if c.is_empty() || c.eq_ignore_ascii_case("nan") { return vec![]; }
+    c.split(';').map(|v| { let v = v.trim(); v.parse::<f64>().map(Value::Num).unwrap_or_else(|_| Value::Par(v.to_string())) }).collect()
+}
+
 fn measurements_of(t: &Table) -> Result<Vec<Measurement>, String> {
     let (o, c, tm, v) = (t.need("observableId")?, t.need("simulationConditionId")?, t.need("time")?, t.need("measurement")?);
-    t.refuse("preequilibrationConditionId", "pre-equilibration comes in stage 2")?;
-    t.refuse("observableParameters", "measurement-specific observable parameters (placeholders) come in stage 2")?;
-    t.refuse("noiseParameters", "measurement-specific noise parameters (placeholders) come in stage 2")?;
+    let (op, np) = (t.col("observableParameters"), t.col("noiseParameters"));
+    t.refuse("preequilibrationConditionId", "pre-equilibration is not supported yet")?;
     let mut out = vec![];
     for (r, row) in t.rows.iter().enumerate() {
         let time = num(&row[tm], || t.at(r, "time"))?;
-        if time.is_infinite() { return Err(format!("{}: steady-state measurements come in stage 2", t.at(r, "time"))); }
+        if time.is_infinite() { return Err(format!("{}: steady-state measurements are not supported yet", t.at(r, "time"))); }
         out.push(Measurement {
             observable: row[o].clone(), condition: row[c].clone(), time,
             value: num(&row[v], || t.at(r, "measurement"))?,
+            observable_parameters: op.map_or(vec![], |k| placeholder_values(&row[k])),
+            noise_parameters: np.map_or(vec![], |k| placeholder_values(&row[k])),
         });
     }
     Ok(out)
@@ -240,13 +248,19 @@ mod tests {
         let e = p.evaluate(&theta, true, true).unwrap();
         // the same problem through the native definition
         let mut def = load(&dir.join("problem.yaml")).unwrap();
-        def.measurements = native.into_iter().map(|(c, o, t, v)| super::Measurement { condition: c, observable: o.into(), time: t, value: v }).collect();
+        def.measurements = native.into_iter().map(|(c, o, t, v)| super::Measurement { condition: c, observable: o.into(), time: t, value: v, ..Default::default() }).collect();
         let e2 = Problem::new(def).unwrap().evaluate(&theta, true, true).unwrap();
         assert_eq!(e.nllh.to_bits(), e2.nllh.to_bits());
-        // stage-2 features are refused with their place
-        write_problem(&dir, "observableId\tsimulationConditionId\ttime\tmeasurement\tnoiseParameters\nobsA\tc1\t1\t2\t0.1\n");
+        // placeholder columns are read: values separated by ';', numbers or parameter ids
+        write_problem(&dir, "observableId\tsimulationConditionId\ttime\tmeasurement\tobservableParameters\tnoiseParameters\nobsA\tc1\t1\t2\tscale;2.5\t0.1\n");
+        let def = load(&dir.join("problem.yaml")).unwrap();
+        let m = &def.measurements[0];
+        assert!(matches!(&m.observable_parameters[..], [Value::Par(a), Value::Num(b)] if a == "scale" && *b == 2.5));
+        assert!(matches!(m.noise_parameters[..], [Value::Num(x)] if x == 0.1));
+        // features not supported yet are refused with their place
+        write_problem(&dir, "observableId\tpreequilibrationConditionId\tsimulationConditionId\ttime\tmeasurement\nobsA\tc1\tc2\t1\t2\n");
         let err = load(&dir.join("problem.yaml")).err().unwrap();
-        assert!(err.contains("measurement table, row 1") && err.contains("noiseParameters") && err.contains("stage 2"), "{err}");
+        assert!(err.contains("measurement table, row 1") && err.contains("preequilibrationConditionId"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

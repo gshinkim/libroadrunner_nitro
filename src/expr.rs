@@ -521,6 +521,12 @@ pub struct Tape {
 /// sensitivity models) never pay for it and long ones lose at most 2x the optimum.
 const JIT_AFTER: u32 = 2000;
 
+/// RRN_NO_JIT set (to anything but 0): tapes are always interpreted (a debugging switch, read once).
+fn jit_disabled() -> bool {
+    static OFF: OnceLock<bool> = OnceLock::new();
+    *OFF.get_or_init(|| std::env::var("RRN_NO_JIT").is_ok_and(|v| v != "0"))
+}
+
 impl Tape {
     pub fn new(dag: &Dag, roots: &[N], ns: usize, np: usize) -> Tape { Tape::new_dyn(dag, roots, ns, np, &[]) }
 
@@ -608,7 +614,7 @@ impl Tape {
             Some(Some(j)) => unsafe { (j.f)(regs.as_mut_ptr()) },
             Some(None) => Self::exec(&self.ins, regs, self.nregs),
             None => {
-                if self.runs.fetch_add(1, Ordering::Relaxed) >= JIT_AFTER {
+                if self.runs.fetch_add(1, Ordering::Relaxed) >= JIT_AFTER && !jit_disabled() {
                     self.jit.get_or_init(|| compile(&self.ins, &self.outs, self.nregs));
                 }
                 Self::exec(&self.ins, regs, self.nregs)

@@ -1,5 +1,6 @@
 //! Multistart local fitting and Fisher-information intervals (spec: "Optimizers", stage 1).
 use super::problem::Problem;
+use super::lbfgsb::{lbfgsb, LbfgsbOptions, LbfgsbStatus, Objective};
 use super::trf::{trf, Residuals, Status, TrfOptions};
 use crate::model::Rng;
 use nalgebra::{DMatrix, SymmetricEigen};
@@ -10,7 +11,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub struct FitOptions {
     pub n_starts: usize,
     pub seed: u64,
+    pub method: Method,
     pub trf: TrfOptions,
+    pub lbfgsb: LbfgsbOptions,
     /// a first start given on the parameter scale (the others are Latin hypercube samples)
     pub x0: Option<Vec<f64>>,
     /// worker threads (0: all cores)
@@ -18,7 +21,38 @@ pub struct FitOptions {
 }
 
 impl Default for FitOptions {
-    fn default() -> Self { FitOptions { n_starts: 10, seed: 0, trf: TrfOptions::default(), x0: None, threads: 0 } }
+    fn default() -> Self {
+        FitOptions { n_starts: 10, seed: 0, method: Method::Auto, trf: TrfOptions::default(), lbfgsb: LbfgsbOptions::default(), x0: None, threads: 0 }
+    }
+}
+
+/// The local optimizer of each start.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Method {
+    /// trust-region least squares for least-squares problems, L-BFGS-B otherwise
+    Auto,
+    /// trust-region reflective least squares (least-squares problems only)
+    LeastSquares,
+    /// L-BFGS-B on the negative log-likelihood and its gradient (any problem)
+    Lbfgsb,
+}
+
+impl Method {
+    pub fn parse(s: &str) -> Result<Method, String> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "" | "auto" => Ok(Method::Auto),
+            "least_squares" | "trf" => Ok(Method::LeastSquares),
+            "lbfgsb" | "l-bfgs-b" => Ok(Method::Lbfgsb),
+            _ => Err(format!("unknown method '{s}' (auto, least_squares, lbfgsb)")),
+        }
+    }
+}
+
+struct Nllh<'a> { p: &'a Problem, stop: &'a AtomicBool }
+
+impl Objective for Nllh<'_> {
+    fn eval(&self, x: &[f64]) -> Option<(f64, Vec<f64>)> { self.p.evaluate(x, true, false).ok().map(|e| (e.nllh, e.grad)) }
+    fn cancel(&self, _nit: usize, _f: f64) -> bool { self.stop.load(Ordering::Relaxed) }
 }
 
 #[derive(Clone, Debug)]
@@ -78,10 +112,15 @@ pub fn latin_hypercube(n: usize, lb: &[f64], ub: &[f64], seed: u64) -> Vec<Vec<f
 /// Multistart trust-region reflective least squares. Each start is independent and deterministic, so the
 /// result for a given seed does not depend on the number of threads.
 pub fn fit(p: &Problem, o: &FitOptions, progress: Option<Progress>) -> Result<FitResult, String> {
-    if !p.least_squares {
-        return Err("this problem is not a least-squares problem (Laplace noise, or noise depending on a free parameter or the state): \
-                    its optimizer (L-BFGS-B) comes in stage 2".into());
-    }
+    let least_squares = match o.method {
+        Method::Auto => p.least_squares,
+        Method::LeastSquares if !p.least_squares => {
+            return Err("this problem is not a least-squares problem (Laplace noise, or noise depending on a free parameter or the state): \
+                        use method lbfgsb (or auto)".into());
+        }
+        Method::LeastSquares => true,
+        Method::Lbfgsb => false,
+    };
     let n = p.n_free();
     if n == 0 { return Err("no parameter to estimate".into()); }
     let (lb, ub) = p.bounds();
@@ -96,15 +135,22 @@ pub fn fit(p: &Problem, o: &FitOptions, progress: Option<Progress>) -> Result<Fi
     let done = std::sync::Mutex::new((0usize, f64::INFINITY));
     let run = || -> Vec<StartResult> {
         starts.par_iter().enumerate().map(|(i, x0)| {
-            let lsq = Lsq { p, stop: &stop };
-            let r = if stop.load(Ordering::Relaxed) { None } else { Some(trf(&lsq, x0, &lb, &ub, &o.trf)) };
-            let s = match r {
-                Some(r) => {
-                    // nllh from the objective itself (cost + the constant terms)
-                    let nllh = if r.status == Status::Failed { f64::INFINITY } else { p.evaluate(&r.x, false, false).map_or(f64::INFINITY, |e| e.nllh) };
-                    StartResult { start: i, x0: x0.clone(), x: r.x, nllh, nfev: r.nfev, njev: r.njev, nit: r.nit, status: r.status }
-                }
-                None => StartResult { start: i, x0: x0.clone(), x: x0.clone(), nllh: f64::INFINITY, nfev: 0, njev: 0, nit: 0, status: Status::Cancelled },
+            let s = if stop.load(Ordering::Relaxed) {
+                StartResult { start: i, x0: x0.clone(), x: x0.clone(), nllh: f64::INFINITY, nfev: 0, njev: 0, nit: 0, status: Status::Cancelled }
+            } else if least_squares {
+                let r = trf(&Lsq { p, stop: &stop }, x0, &lb, &ub, &o.trf);
+                // nllh from the objective itself (cost + the constant terms)
+                let nllh = if r.status == Status::Failed { f64::INFINITY } else { p.evaluate(&r.x, false, false).map_or(f64::INFINITY, |e| e.nllh) };
+                StartResult { start: i, x0: x0.clone(), x: r.x, nllh, nfev: r.nfev, njev: r.njev, nit: r.nit, status: r.status }
+            } else {
+                let r = lbfgsb(&Nllh { p, stop: &stop }, x0, &lb, &ub, &o.lbfgsb);
+                let status = match r.status {
+                    LbfgsbStatus::Failed => Status::Failed, LbfgsbStatus::MaxIter | LbfgsbStatus::MaxEval => Status::MaxEval,
+                    LbfgsbStatus::Gtol => Status::Gtol, LbfgsbStatus::Ftol => Status::Ftol,
+                    LbfgsbStatus::LineSearch => Status::LineSearch, LbfgsbStatus::Cancelled => Status::Cancelled,
+                };
+                // every evaluation gives the gradient too
+                StartResult { start: i, x0: x0.clone(), x: r.x, nllh: r.f, nfev: r.nfev, njev: r.nfev, nit: r.nit, status }
             };
             if let Some(cb) = progress {
                 let mut d = done.lock().unwrap();

@@ -74,8 +74,17 @@ pub enum Value { Num(f64), Par(String) }
 #[derive(Clone, Debug)]
 pub struct ObservableDef { pub id: String, pub formula: String, pub noise_formula: String, pub noise: Noise, pub transform: Scale }
 
-#[derive(Clone, Debug)]
-pub struct Measurement { pub condition: String, pub observable: String, pub time: f64, pub value: f64 }
+#[derive(Clone, Debug, Default)]
+pub struct Measurement {
+    pub condition: String,
+    pub observable: String,
+    pub time: f64,
+    pub value: f64,
+    /// values of the observable's `observableParameter{n}_{observableId}` placeholders, n = 1, 2, ... (numbers or parameter ids)
+    pub observable_parameters: Vec<Value>,
+    /// values of its `noiseParameter{n}_{observableId}` placeholders
+    pub noise_parameters: Vec<Value>,
+}
 
 /// A fitting problem before compilation.
 #[derive(Clone, Debug, Default)]
@@ -157,7 +166,12 @@ pub struct Problem {
     pre: Tape,
     pre_d: Vec<(u32, u32)>, // (row in [p_eff | x0], leaf) of each derivative output after the np + nx values
     obs: Tape,
-    obs_d: Vec<Vec<(bool, u32, u32)>>, // per observable: (is sigma, leaf in [x | p_eff | extras], tape output)
+    obs_d: Vec<Vec<(bool, u32, u32)>>, // per observable: (is sigma, leaf in [x | p_eff | extras | placeholders], tape output)
+    /// first placeholder leaf of the observable tape (nx + np + ne) and its time register (after the placeholders)
+    ph_base: usize,
+    obs_time: usize,
+    /// per measurement: (placeholder leaf - ph_base, the number or parameter filling it)
+    ph: Vec<Vec<(u32, Slot)>>,
     conds: Vec<Cond>,
     base_keys: Vec<Key>,
     dir_ks: Vec<usize>,
@@ -195,6 +209,15 @@ fn with_derivs(mut dag: Dag, roots: &[N], nleaves: usize) -> (Tape, Vec<(u32, u3
         }
     }
     (Tape::new(&dag, &all, nleaves, 0), at)
+}
+
+/// `observableParameter{n}_{id}` -> (false, n), `noiseParameter{n}_{id}` -> (true, n), for observable `id`.
+fn placeholder(name: &str, id: &str) -> Option<(bool, usize)> {
+    let (noise, rest) = if let Some(r) = name.strip_prefix("observableParameter") { (false, r) }
+                        else if let Some(r) = name.strip_prefix("noiseParameter") { (true, r) } else { return None };
+    let (n, tail) = rest.split_once('_')?;
+    if tail != id { return None; }
+    n.parse::<usize>().ok().filter(|&n| n >= 1).map(|n| (noise, n))
 }
 
 impl Problem {
@@ -298,7 +321,13 @@ impl Problem {
         let time = dag.mk(Op::Time);
         let mut aux: Option<Vec<N>> = None;
         let mut roots = vec![];
-        for o in &def.observables {
+        // placeholders observableParameter{n}_{id} / noiseParameter{n}_{id}: one leaf each, after the extras;
+        // per observable, its highest n of each kind and the leaf of each (kind, n)
+        let ph_base = nx + np + ne;
+        let mut ph_leaf: HashMap<(usize, bool, usize), u32> = HashMap::new();
+        let mut ph_count: Vec<[usize; 2]> = vec![[0, 0]; def.observables.len()];
+        let mut ph_nodes: Vec<(u32, N)> = vec![];
+        for (oi, o) in def.observables.iter().enumerate() {
             for (what, src) in [("observableFormula", &o.formula), ("noiseFormula", &o.noise_formula)] {
                 let mut names = vec![];
                 parse(src, &mut Dag::default(), |n| { names.push(n.to_string()); Some(Op::Const(0)) })
@@ -327,8 +356,17 @@ impl Problem {
                         dag.mk(Op::Var((nx + np + e) as u32))
                     } else if nm == "time" || nm == "t" {
                         time
+                    } else if let Some((noise, n)) = placeholder(&nm, &o.id) {
+                        let next = ph_leaf.len() as u32;
+                        let l = *ph_leaf.entry((oi, noise, n)).or_insert(next);
+                        let c = &mut ph_count[oi][noise as usize];
+                        *c = (*c).max(n);
+                        match ph_nodes.iter().find(|e| e.0 == l) {
+                            Some(e) => e.1,
+                            None => { let x = dag.mk(Op::Var((ph_base + l as usize) as u32)); ph_nodes.push((l, x)); x }
+                        }
                     } else {
-                        return Err(format!("observable '{}': {what}: unknown symbol '{nm}' (placeholders come in stage 2)", o.id));
+                        return Err(format!("observable '{}': {what}: unknown symbol '{nm}'", o.id));
                     };
                     sub.insert(nm, n);
                 }
@@ -337,7 +375,16 @@ impl Problem {
                 roots.push(r);
             }
         }
-        let (obs, at) = with_derivs(dag, &roots, nx + np + ne);
+        let nph = ph_leaf.len();
+        for (oi, cnt) in ph_count.iter().enumerate() {
+            for (noise, &m) in [false, true].iter().zip(cnt) {
+                if let Some(n) = (1..=m).find(|&n| !ph_leaf.contains_key(&(oi, *noise, n))) {
+                    return Err(format!("observable '{}': {}Parameter{n}_{} is missing (placeholders are numbered from 1)",
+                                       def.observables[oi].id, if *noise { "noise" } else { "observable" }, def.observables[oi].id));
+                }
+            }
+        }
+        let (obs, at) = with_derivs(dag, &roots, ph_base + nph);
         let no = def.observables.len();
         let mut obs_d = vec![vec![]; no];
         for (q, &(row, leaf)) in at.iter().enumerate() {
@@ -432,16 +479,31 @@ impl Problem {
             }
             conds.push(Cond { id: cid.clone(), leaf, fixed_init, fixed_par, model: mi, times: vec![0.0], meas: vec![] });
         }
+        let mut ph: Vec<Vec<(u32, Slot)>> = Vec::with_capacity(def.measurements.len());
         for (q, ms) in def.measurements.iter().enumerate() {
             let what = format!("measurement {}", q + 1);
             let &c = cidx.get(ms.condition.as_str()).ok_or(format!("{what}: unknown condition '{}'", ms.condition))?;
             let &o = oidx.get(ms.observable.as_str()).ok_or(format!("{what}: unknown observable '{}'", ms.observable))?;
-            if ms.time.is_infinite() { return Err(format!("{what}: steady-state measurements (time inf) come in stage 2")); }
+            if ms.time.is_infinite() { return Err(format!("{what}: steady-state measurements (time inf) are not supported yet")); }
             if !(ms.time >= 0.0) { return Err(format!("{what}: time must be >= 0")); }
             if !ms.value.is_finite() { return Err(format!("{what}: measurement must be a finite number")); }
             if def.observables[o].transform != Scale::Lin && !(ms.value > 0.0) {
                 return Err(format!("{what}: a {}-transformed observable needs measurements > 0", def.observables[o].transform.name()));
             }
+            let mut fill = vec![];
+            for (noise, vals) in [(false, &ms.observable_parameters), (true, &ms.noise_parameters)] {
+                let need = ph_count[o][noise as usize];
+                let col = if noise { "noiseParameters" } else { "observableParameters" };
+                if vals.len() != need {
+                    return Err(format!("{what}: {col} has {} value(s), observable '{}' has {need} placeholder(s)", vals.len(), ms.observable));
+                }
+                for (n, v) in vals.iter().enumerate() {
+                    let w = format!("{what}, {col} {}", n + 1);
+                    let sl = slot_of(v, 1.0, &w)?.ok_or(format!("{w}: a placeholder needs a value"))?;
+                    fill.push((ph_leaf[&(o, noise, n + 1)], sl));
+                }
+            }
+            ph.push(fill);
             conds[c].meas.push((0, o, q));
         }
         for c in &mut conds {
@@ -455,21 +517,25 @@ impl Problem {
         conds.retain(|c| !c.meas.is_empty());
 
         // which p_eff depend on a free parameter somewhere: those get a coefficient in the sensitivity model
-        let is_free = |s: &Slot| matches!(s, Slot::Par(j, _) if def.params[*j].estimate);
+        let is_free_leaf = |s: &Slot| matches!(s, Slot::Par(j, _) if def.params[*j].estimate);
         let mut dep = vec![false; np];
         for c in &conds {
             for &(row, l) in &pre_d {
-                if (row as usize) < np && is_free(&c.leaf[l as usize]) { dep[row as usize] = true; }
+                if (row as usize) < np && is_free_leaf(&c.leaf[l as usize]) { dep[row as usize] = true; }
             }
         }
         let dir_ks: Vec<usize> = (0..np).filter(|&k| dep[k]).collect();
         // least squares: normal noise, noise depending on no state and no free parameter
         let mut least_squares = def.observables.iter().all(|o| o.noise == Noise::Normal);
+        let is_free = |s: &Slot| matches!(s, Slot::Par(j, _) if def.params[*j].estimate);
         for d in &obs_d {
             for &(sig, l, _) in d {
                 if !sig { continue; }
                 let l = l as usize;
-                let free_dep = if l < nx { true } else if l < nx + np { dep[l - nx] } else { def.params[extras[l - nx - np]].estimate };
+                let free_dep = if l < nx { true } else if l < nx + np { dep[l - nx] } else if l < ph_base { def.params[extras[l - nx - np]].estimate } else {
+                    let lp = (l - ph_base) as u32;
+                    ph.iter().flatten().any(|&(pl, sl)| pl == lp && is_free(&sl))
+                };
                 if free_dep { least_squares = false; }
             }
         }
@@ -482,7 +548,7 @@ impl Problem {
         }
         Ok(Problem {
             params: def.params, free, observables: def.observables, measurements: def.measurements, least_squares,
-            rtol: 1e-8, atol: 1e-12, extras, pre, pre_d, obs, obs_d, conds, base_keys, dir_ks,
+            rtol: 1e-8, atol: 1e-12, extras, pre, pre_d, obs, obs_d, ph_base, obs_time: ph_base + nph, ph, conds, base_keys, dir_ks,
             sens: (0..=compartment_models.len()).map(|_| OnceLock::new()).collect(), compartment_models,
             fpos, loc, state_outs: (0..nx as u32).collect(), pool: Mutex::new(vec![]), model,
         })
@@ -502,7 +568,12 @@ impl Problem {
     fn sens_model(&self, mi: usize) -> Result<&SensModel, String> {
         self.sens[mi].get_or_init(|| {
             let m = self.model_of(mi);
-            let a = sens_model_dirs(m, &self.dir_ks)?;
+            // compiling walks the formulas recursively; large models (hundreds of species) nest deeply enough to
+            // overflow a worker thread's stack, so the compile gets a thread with a large one
+            let a = std::thread::scope(|s| {
+                std::thread::Builder::new().stack_size(1 << 30).spawn_scoped(s, || sens_model_dirs(m, &self.dir_ks))
+                    .map_err(|e| format!("sensitivity model: {e}"))?.join().map_err(|_| "sensitivity model: compile failed".to_string())?
+            })?;
             let nx = m.nx;
             let names: Vec<String> = m.pnames.iter().cloned().chain(m.state_ids.iter().cloned())
                 .chain((0..nx).map(|i| format!("__s{i}"))).chain((0..self.dir_ks.len()).map(|q| format!("__c{q}"))).collect();
@@ -544,7 +615,7 @@ impl Problem {
     /// One condition: fills cs.pred for its measurements, with the derivatives if `grad`.
     fn condition(&self, c: &Cond, cs: &mut CondScratch, pv: &[f64], dpv: &[f64], grad: bool) -> Result<(), String> {
         let m = self.model_of(c.model);
-        let (nx, np, nf, ne) = (m.nx, m.pnames.len(), self.free.len(), self.extras.len());
+        let (nx, np, nf) = (m.nx, m.pnames.len(), self.free.len());
         let nl = np + nx;
         let CondScratch { w, regs, vals, dpre, x, oregs, dleaf, dextra, dirs, pred, .. } = cs;
         // pre-tape leaves and their derivatives
@@ -602,9 +673,12 @@ impl Problem {
         }
         self.obs.prep(oregs);
         let stride = 2 + 2 * nf;
-        for (k, &(ti, o, _)) in c.meas.iter().enumerate() {
+        for (k, &(ti, o, q)) in c.meas.iter().enumerate() {
             oregs[..nx].copy_from_slice(&x[ti * nx..(ti + 1) * nx]);
-            oregs[nx + np + ne] = c.times[ti];
+            oregs[self.obs_time] = c.times[ti];
+            for &(l, sl) in &self.ph[q] {
+                oregs[self.ph_base + l as usize] = match sl { Slot::Const(v) => v, Slot::Par(j, f) => f * pv[j] };
+            }
             self.obs.run(oregs);
             let p = &mut pred[k * stride..(k + 1) * stride];
             p[0] = oregs[self.obs.outs[2 * o] as usize];
@@ -622,8 +696,10 @@ impl Problem {
                 } else if l < nx + np {
                     let kk = l - nx;
                     for f in 0..nf { acc[f] += d * dpre[kk * nf + f]; }
-                } else {
+                } else if l < self.ph_base {
                     for &(e, f, de) in dextra.iter() { if e == l - nx - np { acc[f] += d * de; } }
+                } else if let Some(&(_, Slot::Par(j, fac))) = self.ph[q].iter().find(|e| e.0 as usize == l - self.ph_base) {
+                    if let Some(f) = self.fpos[j] { acc[f] += d * fac * dpv[j]; }
                 }
             }
         }

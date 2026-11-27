@@ -4,6 +4,7 @@
 //!   negative log-likelihood, gradient, residuals and residual Jacobian with exact forward sensitivities.
 //! - `trf`: trust-region reflective least squares with bounds.
 //! - `optimize`: Latin hypercube multistart and Fisher-information intervals.
+pub mod lbfgsb;
 pub mod optimize;
 pub mod petab;
 pub mod problem;
@@ -11,7 +12,7 @@ pub mod problem;
 pub mod py;
 pub mod trf;
 
-pub use optimize::{fisher, fit, FitOptions, FitResult, Fisher, StartResult};
+pub use optimize::{fisher, fit, FitOptions, FitResult, Fisher, Method, StartResult};
 pub use problem::{Eval, Measurement, Noise, ObservableDef, ParamDef, Problem, ProblemDef, Scale, Value};
 
 #[cfg(test)]
@@ -54,8 +55,8 @@ mod tests {
             for (q, &t) in TIMES.iter().enumerate() {
                 let (a, b) = decay(t, s10, k1, kk2);
                 let e = perturb * ((q as f64 * 1.7 + c.len() as f64).sin());
-                meas.push(Measurement { condition: c.into(), observable: "obsA".into(), time: t, value: a + e });
-                if t > 0.0 { meas.push(Measurement { condition: c.into(), observable: "obsB".into(), time: t, value: sc * b * (1.0 + 0.1 * e) }); }
+                meas.push(Measurement { condition: c.into(), observable: "obsA".into(), time: t, value: a + e, ..Default::default() });
+                if t > 0.0 { meas.push(Measurement { condition: c.into(), observable: "obsB".into(), time: t, value: sc * b * (1.0 + 0.1 * e), ..Default::default() }); }
             }
         }
         ProblemDef {
@@ -141,8 +142,8 @@ mod tests {
         end";
         let mut meas = vec![];
         for (q, &t) in TIMES.iter().enumerate() {
-            meas.push(Measurement { condition: "a".into(), observable: "y".into(), time: t, value: 3.0 + 0.1 * q as f64 });
-            meas.push(Measurement { condition: "b".into(), observable: "y".into(), time: t, value: 2.0 + 0.2 * q as f64 });
+            meas.push(Measurement { condition: "a".into(), observable: "y".into(), time: t, value: 3.0 + 0.1 * q as f64, ..Default::default() });
+            meas.push(Measurement { condition: "b".into(), observable: "y".into(), time: t, value: 2.0 + 0.2 * q as f64, ..Default::default() });
         }
         let def = ProblemDef {
             sbml: sbml(ant),
@@ -173,7 +174,7 @@ mod tests {
         p.atol = 1e-14;
         assert!(!p.least_squares);
         fd_check(&p, &[0.6f64.log10(), 0.15f64.log10(), 2.5f64.ln(), 12.0, 0.2], 1e-5);
-        assert!(fit(&p, &FitOptions::default(), None).is_err());
+        assert!(fit(&p, &FitOptions { method: Method::LeastSquares, ..Default::default() }, None).is_err());
     }
 
     #[test]
@@ -194,6 +195,25 @@ mod tests {
         let fi = fisher(&p, &b.x, 0.95).unwrap();
         assert!(fi.identifiable.iter().all(|&x| x));
         for k in 0..4 { assert!(fi.sd[k] > 0.0 && fi.sd[k] < 0.1 * truth[k].abs().max(1.0), "{:?}", fi.sd); }
+    }
+
+    #[test]
+    fn lbfgsb_fits_estimated_noise() {
+        // the noise of obsA estimated (not least squares): L-BFGS-B recovers the parameters, and on the least-squares
+        // version of the same problem it reaches the trust-region method's optimum
+        let mut def = decay_problem(0.0);
+        def.params[4] = par("sigma", Scale::Log10, 1e-3, 1.0, 0.1, true);
+        let p = Problem::new(def).unwrap();
+        assert!(!p.least_squares);
+        let r = fit(&p, &FitOptions { n_starts: 12, seed: 5, ..Default::default() }, None).unwrap();
+        let b = r.best();
+        let truth = [0.4f64.log10(), 0.25f64.log10(), 3f64.ln(), 20.0];
+        for k in 0..4 { assert!((b.x[k] - truth[k]).abs() < 1e-3 * truth[k].abs().max(1.0), "{k}: {:?} ({:?})", b.x, b.status); }
+        let q = Problem::new(decay_problem(0.02)).unwrap();
+        let o = FitOptions { n_starts: 8, seed: 2, ..Default::default() };
+        let (a, l) = (fit(&q, &o, None).unwrap(), fit(&q, &FitOptions { method: Method::Lbfgsb, ..o }, None).unwrap());
+        assert!((a.best().nllh - l.best().nllh).abs() < 1e-6 * a.best().nllh.abs(), "{} vs {}", a.best().nllh, l.best().nllh);
+        for k in 0..4 { assert!((a.best().x[k] - l.best().x[k]).abs() < 1e-4 * a.best().x[k].abs().max(1.0)); }
     }
 
     #[test]
@@ -226,7 +246,7 @@ mod tests {
             if let Some(c) = table_c { params.push(par("C", Scale::Lin, 0.1, 10.0, c, false)); }
             let mut meas = vec![];
             for c in ["one", "two", "four"] {
-                for &t in &TIMES[1..] { meas.push(Measurement { condition: c.into(), observable: "y".into(), time: t, value: 1.0 }); }
+                for &t in &TIMES[1..] { meas.push(Measurement { condition: c.into(), observable: "y".into(), time: t, value: 1.0, ..Default::default() }); }
             }
             ProblemDef {
                 sbml: sbml(ant), params,
@@ -258,13 +278,68 @@ mod tests {
     }
 
     #[test]
+    fn placeholders() {
+        // obsA = observableParameter1 * S1 + observableParameter2 with noise noiseParameter1, filled per condition:
+        // the scale is a free parameter in c1 and c2 and the number 1 in c3; the offset 0.5 or the free 'offset'.
+        // The same problem written with the parameter names directly must give the same objective and gradient.
+        let mut ph = decay_problem(0.02);
+        ph.params.push(par("sA", Scale::Log10, 0.1, 10.0, 1.0, true));
+        ph.params.push(par("offset", Scale::Lin, -1.0, 1.0, 0.0, true));
+        ph.params.push(par("sdA", Scale::Lin, 0.01, 1.0, 0.1, false));
+        ph.observables[0].formula = "observableParameter1_obsA * S1 + observableParameter2_obsA".into();
+        ph.observables[0].noise_formula = "noiseParameter1_obsA".into();
+        let mut direct = ph.clone();
+        direct.observables = vec![
+            obs("obsA_c12", "sA * S1 + 0.5", "sdA", Noise::Normal, Scale::Lin),
+            obs("obsA_c3", "1 * S1 + offset", "0.2", Noise::Normal, Scale::Lin),
+            ph.observables[1].clone(),
+        ];
+        for (mp, md) in ph.measurements.iter_mut().zip(direct.measurements.iter_mut()) {
+            if mp.observable != "obsA" { continue; }
+            if mp.condition == "c3" {
+                mp.observable_parameters = vec![Value::Num(1.0), Value::Par("offset".into())];
+                mp.noise_parameters = vec![Value::Num(0.2)];
+                md.observable = "obsA_c3".into();
+            } else {
+                mp.observable_parameters = vec![Value::Par("sA".into()), Value::Num(0.5)];
+                mp.noise_parameters = vec![Value::Par("sdA".into())];
+                md.observable = "obsA_c12".into();
+            }
+        }
+        let mut p = Problem::new(ph).unwrap();
+        let mut q = Problem::new(direct).unwrap();
+        (p.rtol, p.atol, q.rtol, q.atol) = (1e-11, 1e-14, 1e-11, 1e-14);
+        assert!(p.least_squares); // sdA is fixed
+        let theta = [0.6f64.log10(), 0.15f64.log10(), 2.5f64.ln(), 12.0, 0.2, 0.3];
+        let (a, b) = (p.evaluate(&theta, true, true).unwrap(), q.evaluate(&theta, true, true).unwrap());
+        assert!((a.nllh - b.nllh).abs() < 1e-12 * a.nllh.abs(), "{} vs {}", a.nllh, b.nllh);
+        for f in 0..6 { assert!((a.grad[f] - b.grad[f]).abs() < 1e-9 * (1.0 + a.grad[f].abs()), "{f}: {} vs {}", a.grad[f], b.grad[f]); }
+        fd_check(&p, &theta, 1e-5);
+        // a noise placeholder filled by a free parameter: no longer least squares
+        let mut d = decay_problem(0.02);
+        d.params.push(par("sdA", Scale::Log10, 0.01, 1.0, 0.1, true));
+        d.observables[0].noise_formula = "noiseParameter1_obsA".into();
+        for m in d.measurements.iter_mut().filter(|m| m.observable == "obsA") { m.noise_parameters = vec![Value::Par("sdA".into())]; }
+        let mut p = Problem::new(d).unwrap();
+        (p.rtol, p.atol) = (1e-11, 1e-14);
+        assert!(!p.least_squares);
+        fd_check(&p, &[0.6f64.log10(), 0.15f64.log10(), 2.5f64.ln(), 12.0, -1.0], 1e-5);
+    }
+
+    #[test]
     fn refuses_unsupported() {
         let mut def = decay_problem(0.0);
         def.measurements[0].time = f64::INFINITY;
-        assert!(Problem::new(def).err().unwrap().contains("stage 2"));
+        assert!(Problem::new(def).err().unwrap().contains("not supported yet"));
         let mut def = decay_problem(0.0);
-        def.observables[0].formula = "observableParameter1_obsA * S1".into();
-        assert!(Problem::new(def).err().unwrap().contains("unknown symbol"));
+        def.observables[0].formula = "observableParameter1_obsA * S1".into(); // a placeholder no measurement fills
+        assert!(Problem::new(def).err().unwrap().contains("has 1 placeholder"));
+        let mut def = decay_problem(0.0);
+        def.observables[0].formula = "observableParameter2_obsA * S1".into(); // numbered from 1
+        assert!(Problem::new(def).err().unwrap().contains("observableParameter1_obsA is missing"));
+        let mut def = decay_problem(0.0);
+        def.observables[0].formula = "nope * S1".into();
+        assert!(Problem::new(def).err().unwrap().contains("unknown symbol 'nope'"));
         let mut def = decay_problem(0.0);
         def.conditions[0].1.push(("nope".into(), Value::Num(1.0)));
         assert!(Problem::new(def).err().unwrap().contains("not a parameter"));

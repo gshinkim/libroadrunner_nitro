@@ -80,9 +80,33 @@ def compare_simulations(p, theta, sim_path):
 
 
 STEPS = (1e-3, 1e-4, 1e-5, 1e-6)
+MAX_COMPONENTWISE = 20
 
 
 def gradient_check(p, theta):
+    """Up to MAX_COMPONENTWISE parameters: every component (gradient_components); above: directional derivatives
+    g . v along 4 random unit directions against central differences along v (gradient_directions), a check of the
+    whole gradient at a fixed cost."""
+    if len(theta) <= MAX_COMPONENTWISE:
+        return gradient_components(p, theta)
+    rt = (p.rtol, p.atol)
+    p.rtol, p.atol = 1e-10, 1e-14
+    try:
+        _, g = p.gradient(theta)
+        rng = np.random.default_rng(1)
+        errs = []
+        for _ in range(4):
+            v = rng.standard_normal(len(theta))
+            v /= np.linalg.norm(v)
+            exact = float(g @ v)
+            fd = [(p.objective(theta + h * v) - p.objective(theta - h * v)) / (2 * h) for h in STEPS]
+            errs.append(min(abs(f - exact) for f in fd) / max(abs(exact), 1e-3 * np.linalg.norm(g), 1e-12))
+    finally:
+        p.rtol, p.atol = rt
+    return {'max_rel_err': float(max(errs)), 'directional': True, 'grad_norm': float(np.linalg.norm(g))}
+
+
+def gradient_components(p, theta):
     """Exact gradient against central differences at several step sizes. Finite differences of an adaptive
     integration are noisy at small steps and biased at large ones, so each component takes the step that agrees
     best (as AMICI's benchmark tests do). The error of a component is relative to max(|g_k|, 1e-3 * |g| / sqrt(n))
@@ -171,15 +195,34 @@ def main():
     ap.add_argument('--starts', type=int, default=20)
     ap.add_argument('--only', nargs='*')
     ap.add_argument('--out')
+    ap.add_argument('--timeout', type=float, default=900, help='seconds per problem')
+    ap.add_argument('--one', help=argparse.SUPPRESS)  # internal: run one problem, print its JSON
     a = ap.parse_args()
     refs = amici_refs(a.amici_ref)
+    if a.one:
+        print(json.dumps(run_problem(a.one, a.problems, refs, a.starts)), flush=True)
+        return
+    import subprocess
     names = sorted(n for n in os.listdir(a.problems) if os.path.isdir(os.path.join(a.problems, n, 'v1')))
     if a.only:
         names = [n for n in names if n in a.only]
     out = []
     for n in names:
-        r = run_problem(n, a.problems, refs, a.starts)
+        cmd = [sys.executable, os.path.abspath(__file__), a.problems, '--one', n, '--starts', str(a.starts)]
+        if a.amici_ref:
+            cmd += ['--amici-ref', a.amici_ref]
+        t0 = time.perf_counter()
+        try:
+            cp = subprocess.run(cmd, capture_output=True, text=True, timeout=a.timeout)
+            lines = [l for l in cp.stdout.splitlines() if l.startswith('{')]
+            r = json.loads(lines[-1]) if lines else {'problem': n, 'loaded': True, 'error': (cp.stderr.strip().splitlines() or ['no output'])[-1]}
+        except subprocess.TimeoutExpired:
+            r = {'problem': n, 'loaded': True, 'error': f'over the {a.timeout:.0f} s limit'}
+        r['wall_s'] = time.perf_counter() - t0
         out.append(r)
+        if r.get('error'):
+            print(f'{n:40s} ERROR: {r["error"]}', flush=True)
+            continue
         if not r['loaded']:
             print(f'{n:40s} refused ({r["blocked_by"]})', flush=True)
             continue

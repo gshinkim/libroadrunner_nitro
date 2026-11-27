@@ -55,7 +55,7 @@ unsafe fn theta(pr: &Problem, p: *const f64, n: c_int) -> R<Vec<f64>> {
 }
 
 fn status_code(s: Status) -> c_int {
-    match s { Status::Failed => 0, Status::MaxEval => 1, Status::Gtol => 2, Status::Ftol => 3, Status::Xtol => 4, Status::FtolXtol => 5, Status::Cancelled => 6 }
+    match s { Status::Failed => 0, Status::MaxEval => 1, Status::Gtol => 2, Status::Ftol => 3, Status::Xtol => 4, Status::FtolXtol => 5, Status::Cancelled => 6, Status::LineSearch => 7 }
 }
 
 fn boxed<T>(v: T) -> *mut c_void { Box::into_raw(Box::new(v)) as *mut c_void }
@@ -148,7 +148,7 @@ pub unsafe extern "C" fn fitAddMeasurements(p: FitProblemHandle, conditionId: *c
         let pr = prob(p)?;
         let (c, o) = (st(conditionId)?, st(observableId)?);
         let (t, v) = (doubles(times, n)?, doubles(values, n)?);
-        pr.changed().measurements.extend(t.into_iter().zip(v).map(|(time, value)| Measurement { condition: c.clone(), observable: o.clone(), time, value }));
+        pr.changed().measurements.extend(t.into_iter().zip(v).map(|(time, value)| Measurement { condition: c.clone(), observable: o.clone(), time, value, ..Default::default() }));
         Ok(true)
     })
 }
@@ -355,6 +355,7 @@ pub extern "C" fn fitGetStatusMessage(status: c_int) -> *const c_char {
         4 => c"step small enough (xtol)",
         5 => c"objective change and step small enough (ftol, xtol)",
         6 => c"cancelled",
+        7 => c"no further decrease along the search direction (L-BFGS-B)",
         _ => c"unknown status",
     };
     s.as_ptr()

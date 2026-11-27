@@ -41,8 +41,8 @@ fn problem(n: usize, tend: f64) -> Problem {
     for c in ["a", "b"] {
         for q in 0..n {
             let t = tend * (q + 1) as f64 / n as f64;
-            meas.push(Measurement { condition: c.into(), observable: "y2".into(), time: t, value: 1.0 });
-            meas.push(Measurement { condition: c.into(), observable: "y3".into(), time: t, value: 0.5 });
+            meas.push(Measurement { condition: c.into(), observable: "y2".into(), time: t, value: 1.0, ..Default::default() });
+            meas.push(Measurement { condition: c.into(), observable: "y3".into(), time: t, value: 0.5, ..Default::default() });
         }
     }
     Problem::new(ProblemDef {

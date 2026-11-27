@@ -17,7 +17,7 @@ fn arr<'py>(py: Python<'py>, v: Vec<f64>, shape: &[usize]) -> PyResult<Bound<'py
 }
 
 fn status_code(s: Status) -> i32 {
-    match s { Status::Failed => 0, Status::MaxEval => 1, Status::Gtol => 2, Status::Ftol => 3, Status::Xtol => 4, Status::FtolXtol => 5, Status::Cancelled => 6 }
+    match s { Status::Failed => 0, Status::MaxEval => 1, Status::Gtol => 2, Status::Ftol => 3, Status::Xtol => 4, Status::FtolXtol => 5, Status::Cancelled => 6, Status::LineSearch => 7 }
 }
 
 /// FitProblem(sbml): a fitting problem on an SBML model (text). FitProblem.from_petab(yaml_path) loads PEtab v1.
@@ -96,7 +96,7 @@ impl PyFitProblem {
     fn add_measurements(&mut self, condition: String, observable: String, times: Vec<f64>, values: Vec<f64>) -> PyResult<()> {
         if times.len() != values.len() { return Err(verr("times and values differ in length".into())); }
         self.changed().measurements.extend(times.into_iter().zip(values).map(|(time, value)|
-            Measurement { condition: condition.clone(), observable: observable.clone(), time, value }));
+            Measurement { condition: condition.clone(), observable: observable.clone(), time, value, ..Default::default() }));
         Ok(())
     }
 
