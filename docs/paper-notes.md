@@ -151,10 +151,26 @@ times by up to 1000x). Simulate = median of 10 repeats after resetAll. Ratios ar
 libroadrunner's load (LLVM compilation) grows much faster than the model: 4.3 minutes for a 500-reaction chain,
 against 92 ms. On these sparse models the simulation advantage grows with size, to 13x at 500 reactions.
 
-**Random mass-action networks**: being re-measured with cold loads (the earlier table's libroadrunner load
-times were warm). Its simulation times stand: roadrunner_nitro 6-9x faster on small networks, falling to ~1.2x at
-100+ species and three reactions per species, where the stiff solver's dense linear algebra dominates: the place
-to look for further speed on large, densely connected models.
+**Random mass-action networks** (uni/bi reactions, seeded; a network that does not stay finite and bounded is
+replaced by the next seed), against libroadrunner 2.9.1:
+
+| Species | Reactions | Load, libroadrunner | Load, nitro | Ratio | Simulate, libroadrunner | Simulate, nitro | Ratio |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 20 | 20 | 92 ms | 1.0 ms | 92x | 2.7 ms | 0.40 ms | 6.7x |
+| 20 | 100 | 238 ms | 3.7 ms | 64x | 2.8 ms | 0.50 ms | 5.6x |
+| 20 | 300 | 950 ms | 11 ms | 89x | 2.8 ms | 0.86 ms | 3.2x |
+| 20 | 800 | 3.57 s | 51 ms | 71x | 3.3 ms | 1.5 ms | 2.3x |
+| 10 | 30 | 86 ms | 1.1 ms | 82x | 2.2 ms | 0.20 ms | 11.3x |
+| 50 | 150 | 427 ms | 4.8 ms | 88x | 4.9 ms | 1.9 ms | 2.5x |
+| 100 | 300 | 1.22 s | 12 ms | 99x | 15 ms | 8.9 ms | 1.7x |
+| 200 | 600 | 3.27 s | 39 ms | 85x | 44 ms | 33 ms | 1.3x |
+| 400 | 1200 | 7.95 s | 188 ms | 42x | 283 ms | 243 ms | 1.2x |
+
+libroadrunner compiles these mass-action networks far faster than the Michaelis-Menten chains (3.6 s at 800
+reactions, against 258 s for a 500-reaction chain): its compile time depends on the rate laws, not only their
+number. The simulation advantage is largest for small networks and falls to ~1.2x at 100+ species with three
+reactions per species, where the stiff solver's dense linear algebra dominates: the place to look for further
+speed on large, densely connected models.
 
 Through Tellurium (`te.loada`, libroadrunner 2.9.1, Antimony conversion included on both sides) a 200-species,
 300-reaction teUtils random network took 3.1 s to load against 37 ms for roadrunner_nitro, and 22 ms against
