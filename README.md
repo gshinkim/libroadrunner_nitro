@@ -154,6 +154,7 @@ print(p.fisher(r.best))                        # 95% confidence intervals
 ```
 
 Complete examples: `examples/python/fit_simple.py` (the shortest: two rate constants from one time course),
+`examples/python/fit_two_species.py` (two measured species, a missing value, giving the measurement error),
 `examples/python/fit_basic.py` (the whole workflow on a small model, with a plot of the fit)
 and `examples/python/fit_petab.py problem.yaml` (any PEtab problem, including fitting with scipy's optimizers
 driven by the exact gradient). The same fitting is in the C library through `rrc_fit.h` (see
