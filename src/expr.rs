@@ -33,13 +33,43 @@ pub fn factorial(x: f64) -> f64 {
 fn b(x: bool) -> f64 { if x { 1.0 } else { 0.0 } }
 
 /// Apply a non-leaf op to already computed operand values.
+/// x^k by repeated squaring, the order compiler-rt's __powidf2 uses and the native code (jit.rs) emits, so the
+/// interpreter and native code agree to the last bit. (`f64::powi` is an LLVM intrinsic whose result is not pinned
+/// down: it differed by 1 ulp from the native code on Windows.)
+#[inline]
+pub(crate) fn powi(mut x: f64, k: i32) -> f64 {
+    let mut e = k.unsigned_abs();
+    let mut acc: Option<f64> = None;
+    loop {
+        if e & 1 == 1 { acc = Some(match acc { None => x, Some(y) => y * x }); }
+        e /= 2;
+        if e == 0 { break; }
+        x *= x;
+    }
+    let p = acc.unwrap_or(1.0);
+    if k < 0 { 1.0 / p } else { p }
+}
+
+/// min as the native code computes it (Cranelift fmin, then NaN operands give the other one): -0 counts as less
+/// than +0, which `f64::min` leaves unspecified.
+#[inline]
+fn fmin(a: f64, c: f64) -> f64 {
+    if a.is_nan() { c } else if c.is_nan() { a } else if a < c { a } else if c < a { c } else if a.is_sign_negative() { a } else { c }
+}
+
+/// max as the native code computes it: +0 counts as more than -0.
+#[inline]
+fn fmax(a: f64, c: f64) -> f64 {
+    if a.is_nan() { c } else if c.is_nan() { a } else if a > c { a } else if c > a { c } else if a.is_sign_positive() { a } else { c }
+}
+
 #[inline(always)]
 fn apply(op: &Op, r: impl Fn(N) -> f64) -> f64 {
     use Op::*;
     match *op {
         Neg(a) => -r(a), Add(a, c) => r(a) + r(c), Sub(a, c) => r(a) - r(c),
         Mul(a, c) => r(a) * r(c), Div(a, c) => r(a) / r(c), Pow(a, c) => r(a).powf(r(c)),
-        PowI(a, k) => r(a).powi(k), Exp(a) => r(a).exp(), Ln(a) => r(a).ln(),
+        PowI(a, k) => powi(r(a), k), Exp(a) => r(a).exp(), Ln(a) => r(a).ln(),
         Log10(a) => r(a).log10(), Sqrt(a) => r(a).sqrt(), Abs(a) => r(a).abs(),
         Sign(a) => { let x = r(a); if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 } }
         Floor(a) => r(a).floor(), Ceil(a) => r(a).ceil(),
@@ -51,7 +81,7 @@ fn apply(op: &Op, r: impl Fn(N) -> f64) -> f64 {
         And(a, c) => b(r(a) != 0.0 && r(c) != 0.0), Or(a, c) => b(r(a) != 0.0 || r(c) != 0.0),
         Xor(a, c) => b((r(a) != 0.0) != (r(c) != 0.0)), Not(a) => b(r(a) == 0.0),
         Sel(c, x, y) => if r(c) != 0.0 { r(x) } else { r(y) },
-        Min(a, c) => r(a).min(r(c)), Max(a, c) => r(a).max(r(c)),
+        Min(a, c) => fmin(r(a), r(c)), Max(a, c) => fmax(r(a), r(c)),
         Rand(k, _, a, b, c, d) => crate::rand::draw(k, r(a), r(b), r(c), r(d)),
         Const(_) | Var(_) | Par(_) | Time => unreachable!(),
     }

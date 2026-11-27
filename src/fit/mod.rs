@@ -327,6 +327,61 @@ mod tests {
     }
 
     #[test]
+    fn initial_assignment_through_assignment_rule() {
+        // S1(0) = tot, where tot := a1 + 2 * a2 is an assignment rule (as in Zhao_QuantBiol2020)
+        let ant = "model ar
+            compartment C = 1
+            species S1 in C
+            J1: S1 -> ; k*S1
+            tot := a1 + 2*a2
+            S1 = tot
+            a1 = 3; a2 = 1; k = 0.2
+        end";
+        let def = ProblemDef {
+            sbml: sbml(ant),
+            params: vec![par("a1", Scale::Log10, 0.1, 100.0, 3.0, true), par("k", Scale::Log10, 0.01, 10.0, 0.2, true)],
+            conditions: vec![("c".into(), vec![])],
+            observables: vec![obs("y", "S1", "0.1", Noise::Normal, Scale::Lin)],
+            measurements: TIMES.iter().map(|&t| Measurement { condition: "c".into(), observable: "y".into(), time: t, value: 1.0, ..Default::default() }).collect(),
+        };
+        let mut p = Problem::new(def).unwrap();
+        (p.rtol, p.atol) = (1e-11, 1e-14);
+        let theta = [7f64.log10(), 0.3f64.log10()];
+        let y = p.simulate_measurements(&theta).unwrap();
+        for (q, &t) in TIMES.iter().enumerate() { assert!((y[q] - 9.0 * (-0.3 * t).exp()).abs() < 1e-8, "t {t}: {}", y[q]); }
+        fd_check(&p, &theta, 1e-5);
+    }
+
+    #[test]
+    fn switch_times() {
+        // the inflow switches from k1 to k2 at time tsw: fine while tsw is fixed, refused while it is estimated
+        let ant = "model sw
+            compartment C = 1
+            species S1 in C
+            J0: -> S1; piecewise(k1, time < tsw, k2)
+            J1: S1 -> ; kd*S1
+            S1 = 0; k1 = 2; k2 = 0.5; kd = 0.3; tsw = 4.5
+        end";
+        let def = |est_tsw: bool| ProblemDef {
+            sbml: sbml(ant),
+            params: vec![par("k1", Scale::Log10, 0.01, 100.0, 2.0, true), par("kd", Scale::Log10, 0.01, 10.0, 0.3, true),
+                         par("tsw", Scale::Lin, 1.0, 9.0, 4.5, est_tsw)],
+            conditions: vec![("c".into(), vec![])],
+            observables: vec![obs("y", "S1", "0.1", Noise::Normal, Scale::Lin)],
+            measurements: TIMES[1..].iter().map(|&t| Measurement { condition: "c".into(), observable: "y".into(), time: t, value: 1.0, ..Default::default() }).collect(),
+        };
+        let err = Problem::new(def(true)).err().unwrap();
+        assert!(err.contains("'tsw' sets the time of a switch"), "{err}");
+        // the same switch written as Beer_MolBioSystems2014 writes it: time - tsw < 0
+        let mut d = def(true);
+        d.sbml = sbml(&ant.replace("piecewise(k1, time < tsw, k2)", "piecewise(k1, time - tsw < 0, k2)"));
+        assert!(Problem::new(d).err().unwrap().contains("'tsw' sets the time of a switch"));
+        let mut p = Problem::new(def(false)).unwrap();
+        (p.rtol, p.atol) = (1e-11, 1e-14);
+        fd_check(&p, &[0.4f64.log10(), 0.2f64.log10()], 1e-5);
+    }
+
+    #[test]
     fn refuses_unsupported() {
         let mut def = decay_problem(0.0);
         def.measurements[0].time = f64::INFINITY;

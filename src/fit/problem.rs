@@ -12,12 +12,12 @@
 //! `Problem::evaluate` gives the negative log-likelihood and its gradient, and for least-squares problems (normal
 //! noise, noise fixed) the residuals and their Jacobian, all with respect to the free parameters on their scales.
 use crate::expr::{parse, parse_sym, Dag, Op, Sym, Tape, N};
-use crate::model::{Key, Model, Work};
-use crate::sens::{remap, sens_model_dirs};
+use crate::model::{Key, Model, SensSetup, SensState, Work};
+use crate::sens::{remap, sens_setup};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::f64::consts::{LN_10, PI};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Parameter scale, also used for observable transformations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,15 +117,12 @@ struct Cond {
     meas: Vec<(usize, usize, usize)>,
 }
 
-struct SensModel { m: Model, keys: Vec<Key>, souts: Vec<u32> }
 
 /// What `evaluate` returns. `grad`, `res`, `jac` are empty unless asked for; `jac` is row-major
 /// (measurements x free parameters).
 #[derive(Clone, Debug, Default)]
 pub struct Eval { pub nllh: f64, pub grad: Vec<f64>, pub res: Vec<f64>, pub jac: Vec<f64> }
 
-/// Scratch of one sensitivity direction: the sensitivity model's work (made on first use), its inputs and outputs.
-struct DirScratch { w: Option<Work>, v: Vec<f64>, out: Vec<f64>, active: bool, ok: bool }
 
 /// Scratch of one condition, reused across evaluations so the inner loop does not allocate.
 struct CondScratch {
@@ -137,7 +134,8 @@ struct CondScratch {
     oregs: Vec<f64>,  // observable-tape registers
     dleaf: Vec<(usize, usize, f64)>,
     dextra: Vec<(usize, usize, f64)>,
-    dirs: Vec<DirScratch>,
+    /// forward sensitivities of every free parameter (made on the first gradient)
+    st: Option<Box<SensState>>,
     /// per measurement of the condition: [y, sigma, dy/dtheta (nf), dsigma/dtheta (nf)]
     pred: Vec<f64>,
     err: Option<String>,
@@ -176,7 +174,7 @@ pub struct Problem {
     base_keys: Vec<Key>,
     dir_ks: Vec<usize>,
     /// per compiled model (the problem's, then compartment_models)
-    sens: Vec<OnceLock<Result<SensModel, String>>>,
+    sens: Vec<OnceLock<Arc<SensSetup>>>,
     /// per parameter-table row: its index among the free parameters
     fpos: Vec<Option<usize>>,
     /// per measurement: (condition, place among the condition's measurements)
@@ -297,10 +295,43 @@ impl Problem {
                 match key {
                     Some(Key::Spec(i)) => dag.mk(Op::Var((np + i) as u32)),
                     Some(Key::Par(k)) => dag.mk(Op::Var(k as u32)),
-                    None => return Err(format!("initial assignments: '{id}' (an assignment rule variable?) is not supported")),
+                    // an assignment-rule variable: its rule at time 0, through the compiled rules
+                    None => match m.outputs.iter().find(|o| o.0 == id) {
+                        Some(&(_, r)) => aux_node(r, m, ia, info, dag, memo, depth + 1)?,
+                        None => return Err(format!("initial assignments: unknown symbol '{id}'")),
+                    },
                 }
             };
             memo.insert(id.to_string(), n);
+            Ok(n)
+        }
+        /// Register r of the aux tape at time 0, built backwards from r: states and parameters by their initial
+        /// values (initial assignments included), only the registers r needs.
+        fn aux_node(r: u32, m: &Model, ia: &HashMap<&str, &str>, info: &crate::sbml::Info, dag: &mut Dag,
+                    memo: &mut HashMap<String, N>, depth: usize) -> Result<N, String> {
+            let key = format!("#aux{r}");
+            if let Some(&n) = memo.get(&key) { return Ok(n); }
+            if depth > 400 { return Err("initial assignments: assignment rules nested too deeply".into()); }
+            let (nx, np, t) = (m.nx, m.pnames.len(), m.aux_tape());
+            let ru = r as usize;
+            let n = if ru < nx {
+                ia_node(&m.state_ids[ru], m, ia, info, dag, memo, depth + 1)?
+            } else if ru < nx + np {
+                ia_node(&m.pnames[ru - nx], m, ia, info, dag, memo, depth + 1)?
+            } else if ru == nx + np {
+                dag.cst(0.0) // time
+            } else if let Some(&(_, x)) = t.consts.iter().find(|c| c.0 == r) {
+                dag.cst(x)
+            } else {
+                let op = t.pre.iter().chain(&t.ins).find(|e| e.0 == r).map(|e| e.1)
+                    .ok_or_else(|| format!("initial assignments: rule register {r} not found"))?;
+                let mut kids: HashMap<N, N> = HashMap::new();
+                for c in crate::expr::children(&op).iter().flatten() {
+                    if !kids.contains_key(c) { let x = aux_node(*c, m, ia, info, dag, memo, depth + 1)?; kids.insert(*c, x); }
+                }
+                dag.mk(remap(op, |c| kids[&c]))
+            };
+            memo.insert(key, n);
             Ok(n)
         }
         let mut roots = Vec::with_capacity(np + nx);
@@ -525,6 +556,36 @@ impl Problem {
             }
         }
         let dir_ks: Vec<usize> = (0..np).filter(|&k| dep[k]).collect();
+        // A switch time in a rate law that depends on an estimated parameter: moving the switch moves the trajectory,
+        // which forward sensitivities only capture with a jump at the switch (not implemented yet). Refused rather
+        // than give a silently wrong gradient.
+        // every comparison inside the rate laws (rules they use included): one involving time and a parameter that
+        // depends on an estimated one is a switch whose time moves with that parameter (`time > t1`, `time - tau < 0`)
+        {
+            let mut d2 = Dag::default();
+            let leaves: Vec<N> = (0..nx + np).map(|r| d2.mk(Op::Var(r as u32))).collect();
+            let t = d2.mk(Op::Time);
+            let rt = m.rates_tape();
+            let node = lift_tape(rt, &mut d2, &leaves, t);
+            let mut stack: Vec<N> = rt.outs.iter().map(|&r| node[r as usize]).collect();
+            let mut seen = HashSet::new();
+            while let Some(nd) = stack.pop() {
+                if !seen.insert(nd) { continue; }
+                let op = d2.nodes[nd as usize];
+                if matches!(op, Op::Lt(..) | Op::Le(..) | Op::Eq(..) | Op::Ne(..)) {
+                    let mut has_t = false;
+                    let vars = d2.deps(nd, &mut has_t);
+                    if has_t {
+                        if let Some(k) = vars.iter().map(|&v| v as usize).find(|&k| k >= nx && dep[k - nx]) {
+                            return Err(format!("parameter '{}' sets the time of a switch in the model (a piecewise or comparison with time) \
+                                                and depends on an estimated parameter: exact gradients across such switches are not supported yet",
+                                               m.pnames[k - nx]));
+                        }
+                    }
+                }
+                stack.extend(crate::expr::children(&op).iter().flatten());
+            }
+        }
         // least squares: normal noise, noise depending on no state and no free parameter
         let mut least_squares = def.observables.iter().all(|o| o.noise == Noise::Normal);
         let is_free = |s: &Slot| matches!(s, Slot::Par(j, _) if def.params[*j].estimate);
@@ -565,37 +626,21 @@ impl Problem {
 
     fn model_of(&self, mi: usize) -> &Model { if mi == 0 { &self.model } else { &self.compartment_models[mi - 1] } }
 
-    fn sens_model(&self, mi: usize) -> Result<&SensModel, String> {
-        self.sens[mi].get_or_init(|| {
-            let m = self.model_of(mi);
-            // compiling walks the formulas recursively; large models (hundreds of species) nest deeply enough to
-            // overflow a worker thread's stack, so the compile gets a thread with a large one
-            let a = std::thread::scope(|s| {
-                std::thread::Builder::new().stack_size(1 << 30).spawn_scoped(s, || sens_model_dirs(m, &self.dir_ks))
-                    .map_err(|e| format!("sensitivity model: {e}"))?.join().map_err(|_| "sensitivity model: compile failed".to_string())?
-            })?;
-            let nx = m.nx;
-            let names: Vec<String> = m.pnames.iter().cloned().chain(m.state_ids.iter().cloned())
-                .chain((0..nx).map(|i| format!("__s{i}"))).chain((0..self.dir_ks.len()).map(|q| format!("__c{q}"))).collect();
-            let keys = a.resolve(&names)?;
-            let souts = keys[m.pnames.len() + nx..m.pnames.len() + 2 * nx].iter()
-                .map(|k| match k { Key::Spec(i) => Ok(*i as u32), _ => Err("sensitivity model: unexpected layout".to_string()) })
-                .collect::<Result<_, _>>()?;
-            Ok(SensModel { m: a, keys, souts })
-        }).as_ref().map_err(|e| e.clone())
+    /// The parameter derivatives sensitivities need, for compiled model mi (built on first use).
+    fn sens_setup(&self, mi: usize) -> Arc<SensSetup> {
+        self.sens[mi].get_or_init(|| Arc::new(sens_setup(self.model_of(mi), &self.dir_ks))).clone()
     }
 
     fn new_scratch(&self) -> Scratch {
         let m = &self.model;
         let (nx, np, nf) = (m.nx, m.pnames.len(), self.free.len());
         let nl = np + nx;
-        let nv = nl + nx + self.dir_ks.len();
         let conds = self.conds.iter().map(|c| {
             let nt = c.times.len();
             CondScratch {
                 w: self.model_of(c.model).work(), regs: self.pre.regs(), vals: vec![0.0; nl], dpre: vec![0.0; nl * nf], x: vec![0.0; nt * nx],
                 oregs: self.obs.regs(), dleaf: Vec::with_capacity(nl), dextra: Vec::with_capacity(self.extras.len()),
-                dirs: (0..nf).map(|_| DirScratch { w: None, v: vec![0.0; nv], out: vec![0.0; nt * nx], active: false, ok: true }).collect(),
+                st: None,
                 pred: vec![0.0; c.meas.len() * (2 + 2 * nf)], err: None,
             }
         }).collect();
@@ -617,7 +662,7 @@ impl Problem {
         let m = self.model_of(c.model);
         let (nx, np, nf) = (m.nx, m.pnames.len(), self.free.len());
         let nl = np + nx;
-        let CondScratch { w, regs, vals, dpre, x, oregs, dleaf, dextra, dirs, pred, .. } = cs;
+        let CondScratch { w, regs, vals, dpre, x, oregs, dleaf, dextra, st, pred, .. } = cs;
         // pre-tape leaves and their derivatives
         dleaf.clear();
         for (l, s) in c.leaf.iter().enumerate() {
@@ -643,27 +688,23 @@ impl Problem {
             }
             for &(l, f, dl) in dleaf.iter() { if l >= np && c.fixed_init[l - np] { dpre[l * nf + f] += dl; } }
         }
-        // the model, then the sensitivities (one direction per free parameter, in parallel)
+        // the model, with the sensitivities of every free parameter integrated alongside it if `grad`
         m.load(w, &self.base_keys, vals);
-        if !m.simulate(w, &c.times, self.rtol, self.atol, &self.state_outs, x) {
-            return Err(format!("simulation failed in condition '{}'", c.id));
-        }
-        if grad {
-            let sm = self.sens_model(c.model)?;
-            let (vals, dpre) = (&*vals, &*dpre);
-            dirs.par_iter_mut().enumerate().for_each(|(f, d)| {
-                d.ok = true;
-                d.active = (0..nx).any(|i| dpre[(np + i) * nf + f] != 0.0) || self.dir_ks.iter().any(|&k| dpre[k * nf + f] != 0.0);
-                if !d.active { return; }
-                d.v[..nl].copy_from_slice(vals);
-                for i in 0..nx { d.v[nl + i] = dpre[(np + i) * nf + f]; }
-                for (q, &k) in self.dir_ks.iter().enumerate() { d.v[nl + nx + q] = dpre[k * nf + f]; }
-                let w = d.w.get_or_insert_with(|| sm.m.work());
-                sm.m.load(w, &sm.keys, &d.v);
-                d.ok = sm.m.simulate(w, &c.times, self.rtol, self.atol, &sm.souts, &mut d.out);
-            });
-            if dirs.iter().any(|d| !d.ok) { return Err(format!("sensitivity simulation failed in condition '{}'", c.id)); }
-        }
+        let ok = if grad {
+            let sv = st.get_or_insert_with(|| Box::new(m.sens_state(self.sens_setup(c.model), nf)));
+            let nk = self.dir_ks.len();
+            for f in 0..nf {
+                for i in 0..nx { sv.s[f * nx + i] = dpre[(np + i) * nf + f]; }
+                for (q, &k) in self.dir_ks.iter().enumerate() { sv.c[f * nk + q] = dpre[k * nf + f]; }
+            }
+            w.sens = st.take();
+            let ok = m.simulate_sens(w, &c.times, self.rtol, self.atol, &self.state_outs, x);
+            *st = w.sens.take();
+            ok
+        } else {
+            m.simulate(w, &c.times, self.rtol, self.atol, &self.state_outs, x)
+        };
+        if !ok { return Err(format!("simulation failed in condition '{}'", c.id)); }
         // observables, noise and their derivatives
         oregs[nx..nx + np].copy_from_slice(&vals[..np]);
         dextra.clear();
@@ -692,7 +733,7 @@ impl Problem {
                 let acc = if is_sig { &mut ds[..] } else { &mut dy[..] };
                 let l = l as usize;
                 if l < nx {
-                    for (f, dr) in dirs.iter().enumerate() { if dr.active { acc[f] += d * dr.out[ti * nx + l]; } }
+                    if let Some(sv) = st.as_deref() { for f in 0..nf { acc[f] += d * sv.out[(ti * nf + f) * nx + l]; } }
                 } else if l < nx + np {
                     let kk = l - nx;
                     for f in 0..nf { acc[f] += d * dpre[kk * nf + f]; }

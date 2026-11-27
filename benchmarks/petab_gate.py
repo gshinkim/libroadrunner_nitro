@@ -59,24 +59,40 @@ def read_tsv(path):
 
 
 def compare_simulations(p, theta, sim_path):
-    """Max relative difference |ours - AMICI| / max(|AMICI|, 1e-8 * scale), matching rows by (condition,
-    observable, time) in order of appearance."""
+    """Our simulation of every measurement against AMICI's (simulations.tsv in the collection): (max, median)
+    relative difference |ours - AMICI| / max(|AMICI|, 1e-6 * the largest |AMICI| of that observable), and how rows
+    were matched. Rows match by (condition, observable, time) when the file's keys agree with the measurement table;
+    otherwise by position when the row counts and times agree (some files were written from earlier versions of a
+    problem, with other condition or observable names, or other column names). None if neither works."""
     ours = p.simulate(theta)
     meas = p._p.measurements
-    ref = {}
-    for row in read_tsv(sim_path):
-        key = (row['simulationConditionId'], row['observableId'], float(row['time']))
-        ref.setdefault(key, []).append(float(row['simulation']))
+    rows = read_tsv(sim_path)
+    col = lambda r, *names: next((r[n] for n in names if n in r), '')
+    ref = [(col(r, 'simulationConditionId', 'simulationCondition'), col(r, 'observableId'), float(col(r, 'time')),
+            float(col(r, 'simulation'))) for r in rows]
+    by_key = {}
+    for c, o, t, v in ref:
+        by_key.setdefault((c, o, t), []).append(v)
+    matched, how = [], 'keys'
     used = {}
-    errs = []
-    scale = max(1e-300, max(abs(v) for vs in ref.values() for v in vs))
     for (c, o, t, _), y in zip(meas, ours):
         k = (c, o, t)
         i = used.get(k, 0)
         used[k] = i + 1
-        r = ref[k][i]
-        errs.append(abs(y - r) / max(abs(r), 1e-8 * scale))
-    return float(max(errs)), float(np.median(errs))
+        vs = by_key.get(k)
+        if vs is None or i >= len(vs):
+            matched = None
+            break
+        matched.append((o, y, vs[i]))
+    if matched is None:
+        if len(ref) != len(meas) or any(abs(t - rt) > 1e-6 * max(1.0, abs(t)) for (_, _, t, _), (_, _, rt, _) in zip(meas, ref)):
+            return None
+        matched, how = [(o, y, r[3]) for (_, o, _, _), y, r in zip(meas, ours, ref)], 'rows'
+    scale = {}
+    for o, _, r in matched:
+        scale[o] = max(scale.get(o, 0.0), abs(r))
+    errs = [abs(y - r) / max(abs(r), 1e-6 * scale[o], 1e-300) for o, y, r in matched]
+    return float(max(errs)), float(np.median(errs)), how
 
 
 STEPS = (1e-3, 1e-4, 1e-5, 1e-6)
@@ -99,8 +115,13 @@ def gradient_check(p, theta):
             v = rng.standard_normal(len(theta))
             v /= np.linalg.norm(v)
             exact = float(g @ v)
-            fd = [(p.objective(theta + h * v) - p.objective(theta - h * v)) / (2 * h) for h in STEPS]
-            errs.append(min(abs(f - exact) for f in fd) / max(abs(exact), 1e-3 * np.linalg.norm(g), 1e-12))
+            fd = []
+            for h in STEPS:
+                try:
+                    fd.append((p.objective(theta + h * v) - p.objective(theta - h * v)) / (2 * h))
+                except RuntimeError:  # a shifted point that cannot be simulated at these tolerances
+                    pass
+            errs.append(min((abs(f - exact) for f in fd), default=np.inf) / max(abs(exact), 1e-3 * np.linalg.norm(g), 1e-12))
     finally:
         p.rtol, p.atol = rt
     return {'max_rel_err': float(max(errs)), 'directional': True, 'grad_norm': float(np.linalg.norm(g))}
@@ -116,15 +137,21 @@ def gradient_components(p, theta):
     try:
         _, g = p.gradient(theta)
         fds = []
+        def fd(h, e):  # NaN where a shifted point cannot be simulated at these tight tolerances
+            try:
+                return (p.objective(theta + h * e) - p.objective(theta - h * e)) / (2 * h)
+            except RuntimeError:
+                return np.nan
         for h in STEPS:
-            fds.append([(p.objective(theta + h * e) - p.objective(theta - h * e)) / (2 * h) for e in np.eye(len(theta))])
+            fds.append([fd(h, e) for e in np.eye(len(theta))])
     finally:
         p.rtol, p.atol = rt
     fds = np.array(fds)
     gn = np.linalg.norm(g)
     floor = 1e-3 * gn / np.sqrt(len(g)) + 1e-12
-    err = np.abs(fds - g[None, :]).min(axis=0) / np.maximum(np.abs(g), floor)
-    best = fds[np.abs(fds - g[None, :]).argmin(axis=0), np.arange(len(g))]
+    dev = np.where(np.isnan(fds), np.inf, np.abs(fds - g[None, :]))
+    err = dev.min(axis=0) / np.maximum(np.abs(g), floor)
+    best = fds[dev.argmin(axis=0), np.arange(len(g))]
     return {'max_rel_err': float(err.max()), 'worst': p.free_ids[int(err.argmax())], 'grad_norm': float(gn),
             'norm_rel_err': float(np.linalg.norm(g - best) / max(gn, 1e-300))}
 
@@ -169,7 +196,11 @@ def run_problem(name, root, refs, starts):
         return r
     sim = os.path.join(root, name, 'v1', 'simulations.tsv')
     if os.path.exists(sim):
-        r['sim_max_rel_err'], r['sim_median_rel_err'] = compare_simulations(p, th, sim)
+        c = compare_simulations(p, th, sim)
+        if c is None:
+            r['sim_match'] = 'simulations.tsv does not match the measurement table'
+        else:
+            r['sim_max_rel_err'], r['sim_median_rel_err'], r['sim_match'] = c
     if name in refs:
         r['amici_nllh'] = -refs[name]
         r['nllh_diff'] = r['nllh_nominal'] - r['amici_nllh']

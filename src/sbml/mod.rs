@@ -894,6 +894,19 @@ mod tests {
     }
 
     #[test]
+    fn apply_wrapping_one_expression() {
+        // <apply><apply><times/>k S</apply></apply> reads as k * S (libSBML does; Beer_MolBioSystems2014 has one)
+        let s = doc(&format!(r#"<listOfCompartments><compartment id="c" size="1" constant="true"/></listOfCompartments>
+            <listOfSpecies><species id="S" compartment="c" initialConcentration="2" hasOnlySubstanceUnits="false" boundaryCondition="false" constant="false"/></listOfSpecies>
+            <listOfParameters><parameter id="k" value="0.5" constant="true"/></listOfParameters>
+            <listOfReactions><reaction id="J" reversible="false"><listOfReactants><speciesReference species="S" stoichiometry="1" constant="true"/></listOfReactants>
+            <kineticLaw><math {MATH}><apply><apply><times/><ci>k</ci><ci>S</ci></apply></apply></math></kineticLaw></reaction></listOfReactions>"#));
+        let (m, _) = from_sbml(&s).unwrap();
+        let y = at(&m, 1.0, &["S"]);
+        assert!((y[0] - 2.0 * (-0.5f64).exp()).abs() < 1e-6, "{y:?}");
+    }
+
+    #[test]
     fn comp_needs_flattening() {
         let s = doc("").replace("<sbml ", r#"<sbml xmlns:comp="http://www.sbml.org/sbml/level3/version1/comp/version1" comp:required="true" "#);
         assert_eq!(from_sbml(&s).err(), Some(Error::NotImplemented("comp: flatten first".into())));

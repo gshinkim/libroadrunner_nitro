@@ -140,6 +140,11 @@ impl<'a, 'i: 'a> Reader<'a, 'i> {
         let head = kids.next()?;
         let head_name = self.name_in(head, ns::MATHML)?;
         let rest: Vec<_> = kids.collect();
+        // <apply><apply>...</apply></apply>: an apply wrapping a single expression is that expression, as libSBML
+        // reads it (PEtab benchmark Beer_MolBioSystems2014 has one in a kinetic law)
+        if head_name == "apply" && rest.is_empty() {
+            return Some(self.expr(head));
+        }
         let qualifier = |r: &mut Self, q: &str| -> Option<(Option<Box<Math>>, Vec<Node<'a, 'i>>)> {
             let mut found = None;
             let mut args = Vec::new();

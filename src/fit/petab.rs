@@ -96,7 +96,11 @@ pub fn load(yaml: &Path) -> Result<ProblemDef, String> {
         Ok(v.iter().map(|f| dir.join(f)).collect())
     };
     let sbml_path = one("sbml_files")?;
-    let sbml = std::fs::read_to_string(&sbml_path).map_err(|e| format!("SBML {}: {e}", sbml_path.display()))?;
+    let mut sbml = std::fs::read_to_string(&sbml_path).map_err(|e| format!("SBML {}: {e}", sbml_path.display()))?;
+    // hierarchical models (SBML comp package): flattened, as RoadRunner does on load
+    if sbml.contains("http://www.sbml.org/sbml/level3/version1/comp/") {
+        sbml = sbml_io::comp::flatten(&sbml, sbml_path.parent()).map_err(|e| format!("SBML {}: comp flattening: {e}", sbml_path.display()))?;
+    }
     let params = parameters(&Table::read(&one("parameter_file")?, "parameter")?)?;
     let mut conditions = vec![];
     for f in many("condition_files")? { conditions.extend(conditions_of(&Table::read(&f, "condition")?)?); }

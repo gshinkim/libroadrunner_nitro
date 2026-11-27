@@ -253,6 +253,78 @@ pub struct Work {
     pub ctl: Ctl,
     /// variable-step output (ctl.var): (times, rows of outs)
     pub rows: (Vec<f64>, Vec<f64>),
+    /// forward sensitivities integrated with the state (`simulate_sens`)
+    pub sens: Option<Box<SensState>>,
+}
+
+/// Parameter derivatives of the rates, for forward sensitivities (crate::sens::sens_setup): one tape giving every
+/// nonzero d v_j / d p_{ks[q]} from registers [x | params | time]; `at[m]` = (j, q) of output m.
+pub struct SensSetup { pub ks: Vec<usize>, pub(crate) tape: Tape, pub(crate) at: Vec<(u32, u32)> }
+
+/// Forward sensitivities along `nd` directions, integrated with the state by its BDF steps (the staggered direct
+/// method, as CVODES): direction f solves ds/dt = J(x) s + sum_q c[f][q] df/dp_{ks[q]}, after each accepted state
+/// step with the same step size and order: one linear solve per direction with one factorization of
+/// (1/c) I - J(x_n) per step. The state's own steps are unchanged by it.
+pub struct SensState {
+    setup: std::sync::Arc<SensSetup>,
+    pub nd: usize,
+    /// nd x nx: s(t0) on entry, the current sensitivities during a run
+    pub s: Vec<f64>,
+    /// nd x len(ks): the direction coefficients
+    pub c: Vec<f64>,
+    /// after a run: s at every output time, len(times) x nd x nx
+    pub out: Vec<f64>,
+    nk: usize,
+    ds: Vec<f64>, // nd x (BDF_MAX + 3) x nx: BDF differences per direction
+    pt: Vec<f64>, // parameter-tape registers
+    jf: Vec<f64>, piv: Vec<usize>, lo: Vec<(u32, u32, f64)>, up: Vec<(u32, u32, f64)>,
+    // per direction: predictor, psi, right-hand side / correction (nd x nx each), rate derivatives (nd x nv)
+    yp: Vec<f64>, psi: Vec<f64>, r: Vec<f64>, b: Vec<f64>, wv: Vec<f64>, tmp: Vec<f64>,
+    failed: bool,
+}
+
+/// Directions are worked in parallel when there is enough work per step (directions x Jacobian entries); below,
+/// one after another. Each direction's arithmetic is the same either way, so the results are identical.
+const SENS_PAR_WORK: usize = 20_000;
+
+/// Rescale BDF differences for a step size change by `fac` (the last correction scales as h^(k+1)).
+fn rescale_d(d: &mut [f64], tmp: &mut [f64], nx: usize, k: usize, fac: f64) {
+    bdf_change(d, tmp, nx, k, fac);
+    let s = fac.powi(k as i32 + 1);
+    for x in &mut d[(k + 1) * nx..(k + 2) * nx] { *x *= s; }
+}
+
+impl SensState {
+    fn stride(&self, nx: usize) -> usize { let _ = self; (BDF_MAX + 3) * nx }
+    fn rescale(&mut self, nx: usize, k: usize, fac: f64) {
+        let st = self.stride(nx);
+        for f in 0..self.nd { rescale_d(&mut self.ds[f * st..(f + 1) * st], &mut self.tmp, nx, k, fac); }
+    }
+    /// The BDF interpolant of direction f at te into out.
+    fn interp(&self, b: &Bdf, nx: usize, f: usize, te: f64, out: &mut [f64]) {
+        let d = &self.ds[f * self.stride(nx)..];
+        out.copy_from_slice(&d[..nx]);
+        let mut p = 1.0;
+        for j in 0..b.order {
+            p *= (te - (b.t - b.h * j as f64)) / (b.h * (j + 1) as f64);
+            for i in 0..nx { out[i] += d[(j + 1) * nx + i] * p; }
+        }
+    }
+    fn record_current(&mut self, q: usize) {
+        let n = self.s.len();
+        self.out[q * n..(q + 1) * n].copy_from_slice(&self.s);
+    }
+    fn record_interp(&mut self, b: &Bdf, nx: usize, q: usize, te: f64) {
+        let n = self.s.len();
+        let mut o = std::mem::take(&mut self.out);
+        for f in 0..self.nd { self.interp(b, nx, f, te, &mut o[q * n + f * nx..q * n + (f + 1) * nx]); }
+        self.out = o;
+    }
+    fn interp_into_s(&mut self, b: &Bdf, nx: usize, te: f64) {
+        let mut s = std::mem::take(&mut self.s);
+        for f in 0..self.nd { self.interp(b, nx, f, te, &mut s[f * nx..(f + 1) * nx]); }
+        self.s = s;
+    }
 }
 
 /// libroadrunner integrator settings the solvers honour (0 / false: unset, as upstream). CVODE:
@@ -777,7 +849,7 @@ impl Model {
             yn: z(nx), dy: z(nx), fx: z(nx), f0: z(nx), k: std::array::from_fn(|_| z(nx)), jf: z(nx * nx), pivf: vec![0; nx],
             lo: vec![], up: vec![], xm: z(ni * nr),
             ra: self.aux.regs(), y0: z(nx), d1: z(nx), d2: z(nx), prev: vec![false; self.events.len()], prevc: vec![false; self.comps.len()],
-            pend: vec![], tmp: vec![], amt: z(nx), atol_scale: vec![1.0; nx], stats: [0; 4], ctl: Ctl::default(), rows: (vec![], vec![]),
+            pend: vec![], tmp: vec![], amt: z(nx), atol_scale: vec![1.0; nx], stats: [0; 4], ctl: Ctl::default(), rows: (vec![], vec![]), sens: None,
             bdf: Bdf { d: z((BDF_MAX + 3) * nx), jev: z(self.jac.len() + self.dt.len()), sc: std::array::from_fn(|_| z(nx)), ..Default::default() },
             hist: Hist { rd: Mutex::new(self.dtape.regs()), yt: Mutex::new(z(nx)), ..Default::default() },
             rng: Rng::new(0x5eed_e7e7),
@@ -1191,7 +1263,8 @@ impl Model {
     /// Returns the new time.
     fn bdf_step(&self, w: &mut Work, t: f64, t1: f64, rtol: f64, atol: f64) -> Option<f64> {
         let nx = self.nx;
-        let Work { rr, rf, v, ev, s: y, jf, pivf, lo, up, tmp, bdf: b, atol_scale: asc, stats: w_stats, hist, ctl, .. } = w;
+        let np = self.pnames.len();
+        let Work { rr, rf, v, ev, s: y, jf, pivf, lo, up, tmp, bdf: b, atol_scale: asc, stats: w_stats, hist, ctl, sens, .. } = w;
         let max_order = if ctl.max_order > 0 { ctl.max_order.min(BDF_MAX) } else { BDF_MAX };
         let Bdf { d, order, h, t: bt, neq, lu: has_lu, lufac, crate_, jev, sc, nlu, jage, defer } = b;
         let [yp, psi, dd, yn, f, dy, wt] = sc; // wt: inverse error weights 1 / (atol * scale + rtol |y|)
@@ -1220,6 +1293,7 @@ impl Model {
             *defer = false;
             self.full_at_solver(hist, rf, v, ev, y, t);
             jev.copy_from_slice(ev);
+            if let Some(st) = sens.as_deref_mut() { self.sens_restart(st, ev, &rr[nx..nx + np], y, t, *h); }
         }
         // step size change by `fac`: re-interpolate the differences; the last correction (used only
         // for the order k+1 error estimate) scales as h^(k+1)
@@ -1236,7 +1310,9 @@ impl Model {
             let mut tn = t + *h;
             if tn >= t1 {
                 tn = t1;
-                rescale(d, tmp, *order, (t1 - t) / *h);
+                let fac = (t1 - t) / *h;
+                rescale(d, tmp, *order, fac);
+                if let Some(st) = sens.as_deref_mut() { st.rescale(nx, *order, fac); }
                 *h = t1 - t;
             }
             let k = *order;
@@ -1297,6 +1373,7 @@ impl Model {
                 let fac = ctl.shrink(*h, 0.25)?;
                 *h *= fac;
                 rescale(d, tmp, *order, fac);
+                if let Some(st) = sens.as_deref_mut() { st.rescale(nx, *order, fac); }
                 *neq = 0;
                 continue;
             }
@@ -1311,6 +1388,7 @@ impl Model {
                 let fac = ctl.shrink(*h, fac)?;
                 *h *= fac;
                 rescale(d, tmp, *order, fac);
+                if let Some(st) = sens.as_deref_mut() { st.rescale(nx, *order, fac); }
                 *neq = 0;
                 continue;
             }
@@ -1329,6 +1407,11 @@ impl Model {
             let (a, b) = d.split_at_mut((j + 1) * nx);
             for (x, &y) in a[j * nx..].iter_mut().zip(&b[..nx]) { *x += y; }
         }
+        // sensitivities: the same step for every direction, with the Jacobian at the accepted point
+        if let Some(st) = sens.as_deref_mut() {
+            self.full_at_solver(hist, rf, v, ev, y, ynew_t);
+            if !self.sens_step(st, ev, &rr[nx..nx + np], y, ynew_t, *h / BDF_ALPHA[k], k) { st.failed = true; }
+        }
         if std::mem::replace(defer, false) { return Some(ynew_t); } // no growth right after an error failure
         // CVODE's step/order choice: h ratios at orders k-1, k, k+1 with error biases 6, 6, 10
         let eta = |e: f64, q: usize, bias: f64| 1.0 / ((bias * e).powf(1.0 / q as f64) + 1e-6);
@@ -1343,6 +1426,7 @@ impl Model {
         if nk != k { *order = nk; *neq = 0; }
         *h *= fac;
         rescale(d, tmp, *order, fac);
+        if let Some(st) = sens.as_deref_mut() { st.rescale(nx, *order, fac); }
         Some(ynew_t)
     }
 
@@ -1665,7 +1749,8 @@ impl Model {
         let mut t = times[0];
         // Prefer the one-step method in nonstiff mode. The stiff default uses BDF at tight
         // tolerances, or whenever a lower BDF order was explicitly requested.
-        let mut bdf = !w.ctl.nonstiff && (rtol < BDF_BELOW_RTOL || (1..BDF_MAX).contains(&w.ctl.max_order));
+        let sens = w.sens.is_some(); // forward sensitivities ride on the BDF steps: BDF only
+        let mut bdf = sens || (!w.ctl.nonstiff && (rtol < BDF_BELOW_RTOL || (1..BDF_MAX).contains(&w.ctl.max_order)));
         let dl = !self.dly.is_empty(); // delay(): one-step Rodas4, steps no longer than the shortest delay
         if dl { bdf = false; }
         let bdf0 = bdf;
@@ -1683,7 +1768,12 @@ impl Model {
         if !self.push_row(w, t, outs) { return true; }
         for _ in 0..MAX_STEPS * 10 {
             // times[q] < t only for an output at a breakpoint, two ulps behind the clock
-            while q < nt && times[q] <= t { self.record(w, times[q], outs, &mut out[q * no..(q + 1) * no]); q += 1; n = 0; }
+            while q < nt && times[q] <= t {
+                self.record(w, times[q], outs, &mut out[q * no..(q + 1) * no]);
+                if let Some(st) = w.sens.as_deref_mut() { st.record_current(q); }
+                q += 1;
+                n = 0;
+            }
             if q == nt { return true; }
             n += 1;
             if n > w.ctl.step_limit() { return false; }
@@ -1709,7 +1799,7 @@ impl Model {
                 if w.ctl.hmin > cap || (h == 0.0 && w.ctl.h0 > cap) { t1 = t1.min(t + cap); }
             }
             let mut step = if bdf { self.bdf_step(w, t, t1, rtol, atol) } else { self.step(w, t, t1, &mut h, rtol, atol) };
-            if step.is_none() && bdf { // BDF gave up (e.g. loose atol on a near-singular system): Rodas4 from here
+            if step.is_none() && bdf && !sens { // BDF gave up (e.g. loose atol on a near-singular system): Rodas4 from here
                 bdf = false;
                 w.stats[3] += 1;
                 step = self.step(w, t, t1, &mut h, rtol, atol);
@@ -1748,8 +1838,9 @@ impl Model {
                 if !bdf { self.dense_coef(w); }
                 while q < nt && times[q] < te {
                     if bdf { self.bdf_interp(w, times[q]) } else { self.interp(w, (times[q] - t) / (tn - t)) }
-                    let Work { ra, yn, hist, .. } = w;
+                    let Work { ra, yn, hist, sens: so, bdf: bb, .. } = w;
                     self.record_y(hist, ra, yn, times[q], outs, &mut out[q * no..(q + 1) * no]);
+                    if let Some(st) = so.as_deref_mut() { st.record_interp(bb, self.nx, q, times[q]); }
                     q += 1;
                     n = 0;
                 }
@@ -1757,6 +1848,8 @@ impl Model {
             if te < tn && bdf { // state at the event from the interpolant; restart after it
                 self.bdf_interp(w, te);
                 w.s.copy_from_slice(&w.yn);
+                let Work { sens: so, bdf: bb, .. } = w;
+                if let Some(st) = so.as_deref_mut() { st.interp_into_s(bb, self.nx, te); }
             } else if te < tn { // redo the step exactly up to the event
                 w.s.copy_from_slice(&w.y0);
                 let mut h2 = te - t;
@@ -2446,8 +2539,119 @@ mod tests {
 impl Model {
     /// Tape computing the rate vector v (outs, nv) from registers [state | params | time].
     pub fn rates_tape(&self) -> &Tape { &self.rates }
+
+    /// A sensitivity state for `nd` directions over the parameters of `setup` (built for this model).
+    pub fn sens_state(&self, setup: std::sync::Arc<SensSetup>, nd: usize) -> SensState {
+        let (nx, nk) = (self.nx, setup.ks.len());
+        let z = |n: usize| vec![0.0; n];
+        let mut pt = setup.tape.regs();
+        setup.tape.prep(&mut pt);
+        SensState { setup, nd, s: z(nd * nx), c: z(nd * nk), out: vec![], nk, ds: z(nd * (BDF_MAX + 3) * nx), pt,
+                    jf: z(nx * nx), piv: vec![0; nx], lo: vec![], up: vec![], yp: z(nd * nx), psi: z(nd * nx), r: z(nd * nx),
+                    b: z(nd * nx), wv: z(nd * self.nv), tmp: z(BDF_MAX + 3), failed: false }
+    }
+
+    /// `simulate` with forward sensitivities (w.sens set; its `s` holds s(t0)): on success w.sens.out holds s at
+    /// every output time. Models with events, delays or algebraic rules are not supported (false).
+    pub fn simulate_sens(&self, w: &mut Work, times: &[f64], rtol: f64, atol: f64, outs: &[u32], out: &mut [f64]) -> bool {
+        if self.has_events() || self.has_delays() || self.has_algebraic() { return false; }
+        let nx = self.nx;
+        let Some(st) = w.sens.as_deref_mut() else { return false };
+        st.failed = false;
+        let n = times.len() * st.nd * nx;
+        if st.out.len() != n { st.out.resize(n, 0.0); }
+        let ok = self.simulate(w, times, rtol, atol, outs, out);
+        ok && !w.sens.as_deref().is_some_and(|st| st.failed)
+    }
+
+    /// out = J s, J from the Jacobian entries ev.
+    fn jac_mul(&self, ev: &[f64], s: &[f64], out: &mut [f64]) {
+        let nx = self.nx;
+        out.fill(0.0);
+        for &(d, e, c) in &self.jfull { out[d as usize / nx] += c * ev[e as usize] * s[d as usize % nx]; }
+    }
+
+    /// b[f] = (df/dp) . c[f] for every direction at (x, params, t).
+    fn sens_b(&self, st: &mut SensState, x: &[f64], params: &[f64], t: f64) {
+        let (nx, np, nv) = (self.nx, self.pnames.len(), self.nv);
+        let SensState { setup, pt, c, b, wv, nd, nk, .. } = st;
+        pt[..nx].copy_from_slice(x);
+        pt[nx..nx + np].copy_from_slice(params);
+        pt[nx + np] = t;
+        setup.tape.run(pt);
+        let (pt, setup, nk, c) = (&*pt, &**setup, *nk, &*c);
+        let one = |(f, (bf, wf)): (usize, (&mut [f64], &mut [f64]))| {
+            wf.fill(0.0);
+            for (m, &(j, q)) in setup.at.iter().enumerate() { wf[j as usize] += pt[setup.tape.outs[m] as usize] * c[f * nk + q as usize]; }
+            self.rhs(wf, bf);
+        };
+        if *nd * setup.at.len().max(nx) >= SENS_PAR_WORK {
+            b.par_chunks_mut(nx).zip(wv.par_chunks_mut(nv)).enumerate().for_each(one);
+        } else {
+            b.chunks_mut(nx).zip(wv.chunks_mut(nv)).enumerate().for_each(one);
+        }
+    }
+
+    /// BDF (re)start: differences [s, h s'] per direction.
+    fn sens_restart(&self, st: &mut SensState, ev: &[f64], params: &[f64], y: &[f64], t: f64, h: f64) {
+        let nx = self.nx;
+        let stride = st.stride(nx);
+        self.sens_b(st, y, params, t);
+        for f in 0..st.nd {
+            let SensState { s, ds, b, r, .. } = &mut *st;
+            let r = &mut r[f * nx..(f + 1) * nx];
+            self.jac_mul(ev, &s[f * nx..(f + 1) * nx], r);
+            let d = &mut ds[f * stride..(f + 1) * stride];
+            d.fill(0.0);
+            d[..nx].copy_from_slice(&s[f * nx..(f + 1) * nx]);
+            for i in 0..nx { d[nx + i] = h * (r[i] + b[f * nx + i]); }
+        }
+    }
+
+    /// The accepted state step (order k, c = h / alpha_k) for every direction: the BDF corrector of the linear
+    /// sensitivity equation, ((1/c) I - J) delta = J yp + b - psi / c, then the differences updated as the state's.
+    #[allow(clippy::too_many_arguments)]
+    fn sens_step(&self, st: &mut SensState, ev: &[f64], params: &[f64], y: &[f64], t: f64, c: f64, k: usize) -> bool {
+        let nx = self.nx;
+        let stride = st.stride(nx);
+        if !self.factor(ev, 1.0 / c, &mut st.jf, &mut st.piv, &mut st.lo, &mut st.up) { return false; }
+        self.sens_b(st, y, params, t);
+        let nd = st.nd;
+        let SensState { s, ds, b, r, yp, psi, piv, lo, up, .. } = &mut *st;
+        let (piv, lo, up, b) = (&*piv, &*lo, &*up, &*b);
+        let one = |(f, ((((d, sf), ypf), psif), rf)): (usize, ((((&mut [f64], &mut [f64]), &mut [f64]), &mut [f64]), &mut [f64]))| -> bool {
+            ypf.copy_from_slice(&d[..nx]);
+            psif.fill(0.0);
+            for j in 1..=k {
+                let g = BDF_GAMMA[j] / BDF_ALPHA[k];
+                for i in 0..nx { let x = d[j * nx + i]; ypf[i] += x; psif[i] += g * x; }
+            }
+            self.jac_mul(ev, ypf, rf);
+            for i in 0..nx { rf[i] += b[f * nx + i] - psif[i] / c; }
+            sparse_solve(piv, lo, up, rf);
+            if !rf.iter().all(|x| x.is_finite()) { return false; }
+            let (a, bb) = d.split_at_mut((k + 2) * nx);
+            for i in 0..nx { bb[i] = rf[i] - a[(k + 1) * nx + i]; a[(k + 1) * nx + i] = rf[i]; }
+            for j in (0..=k).rev() {
+                let (a, bb) = d.split_at_mut((j + 1) * nx);
+                for i in 0..nx { a[j * nx + i] += bb[i]; }
+            }
+            sf.copy_from_slice(&d[..nx]);
+            true
+        };
+        if nd * self.jfull.len().max(nx) >= SENS_PAR_WORK {
+            ds.par_chunks_mut(stride).zip(s.par_chunks_mut(nx)).zip(yp.par_chunks_mut(nx)).zip(psi.par_chunks_mut(nx))
+                .zip(r.par_chunks_mut(nx)).enumerate().map(one).reduce(|| true, |a, b| a && b)
+        } else {
+            ds.chunks_mut(stride).zip(s.chunks_mut(nx)).zip(yp.chunks_mut(nx)).zip(psi.chunks_mut(nx))
+                .zip(r.chunks_mut(nx)).enumerate().map(one).fold(true, |a, b| a && b)
+        }
+    }
     /// The aux tape (assignment rules, reaction rates, event expressions; `outputs` index its registers).
     pub fn aux_tape(&self) -> &Tape { &self.aux }
+    /// Aux registers of the time breakpoints: switch times in rate laws (`piecewise(x, time > t1, y)`), each an
+    /// expression of parameters only.
+    pub fn time_breakpoints(&self) -> &[u32] { &self.tbreak }
     /// Tape computing the rates and every nonzero Jacobian entry (the solvers' main tape; for benchmarks).
     pub(crate) fn full_tape(&self) -> &Tape { &self.full }
 }

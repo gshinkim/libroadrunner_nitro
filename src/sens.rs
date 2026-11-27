@@ -179,6 +179,25 @@ pub fn sens_model(m: &Model, k: Option<usize>) -> Result<Model, String> {
                Rules { rate, events: m.event_src.clone(), ..Default::default() })
 }
 
+/// The parameter derivatives forward sensitivities need (Model::simulate_sens): every nonzero d v_j / d p_k for
+/// k in `ks`, as one tape over [x | params | time]. Small even for large models (each rate depends on few
+/// parameters), unlike the augmented models below.
+pub fn sens_setup(m: &Model, ks: &[usize]) -> crate::model::SensSetup {
+    let nx = m.nx;
+    let (mut dag, v) = lift(m);
+    let (mut roots, mut at) = (vec![], vec![]);
+    for (j, &r) in v.iter().enumerate() {
+        let mut has_t = false;
+        let deps = dag.deps(r, &mut has_t);
+        for (q, &k) in ks.iter().enumerate() {
+            if !deps.contains(&((nx + k) as u32)) { continue; }
+            let d = dag.diff(r, Op::Var((nx + k) as u32));
+            if dag.val(d) != Some(0.0) { at.push((j as u32, q as u32)); roots.push(d); }
+        }
+    }
+    crate::model::SensSetup { ks: ks.to_vec(), tape: Tape::new(&dag, &roots, nx + m.pnames.len(), 0), at }
+}
+
 /// Augmented model for directional sensitivities, compiled once for many directions: states [x | s] with
 /// ds/dt = J(x) s + sum_q c_q df/dp_{ks[q]}, where the coefficients c_q are parameters `__c{q}` (default 0).
 /// A direction is chosen at load time by the c values and the initial s (`__s{i}` states), so one model
