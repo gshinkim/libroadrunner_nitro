@@ -1,8 +1,8 @@
 //! PEtab v1 import, in Rust (spec: "PEtab import"): the YAML problem file, the parameter, condition,
 //! observable and measurement tables, and the SBML model, into a `ProblemDef`.
 //!
-//! Stage 1 covers the core tables. Features of later stages (placeholders, pre-equilibration, priors,
-//! steady-state measurements) are refused with an error naming the table, row and column, never ignored.
+//! Covers the core tables, placeholders, pre-equilibration and steady-state measurements (time inf). Features of
+//! later stages (priors) are refused with an error naming the table, row and column, never ignored.
 use super::problem::{Measurement, Noise, ObservableDef, ParamDef, ProblemDef, Scale, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -177,14 +177,15 @@ fn placeholder_values(cell: &str) -> Vec<Value> {
 
 fn measurements_of(t: &Table) -> Result<Vec<Measurement>, String> {
     let (o, c, tm, v) = (t.need("observableId")?, t.need("simulationConditionId")?, t.need("time")?, t.need("measurement")?);
-    let (op, np) = (t.col("observableParameters"), t.col("noiseParameters"));
-    t.refuse("preequilibrationConditionId", "pre-equilibration is not supported yet")?;
+    let (op, np, pe) = (t.col("observableParameters"), t.col("noiseParameters"), t.col("preequilibrationConditionId"));
     let mut out = vec![];
     for (r, row) in t.rows.iter().enumerate() {
         let time = num(&row[tm], || t.at(r, "time"))?;
-        if time.is_infinite() { return Err(format!("{}: steady-state measurements are not supported yet", t.at(r, "time"))); }
+        if time == f64::NEG_INFINITY { return Err(format!("{}: time -inf", t.at(r, "time"))); }
+        let preeq = pe.map_or("", |k| row[k].trim());
         out.push(Measurement {
             observable: row[o].clone(), condition: row[c].clone(), time,
+            preeq_condition: if preeq.eq_ignore_ascii_case("nan") { String::new() } else { preeq.to_string() },
             value: num(&row[v], || t.at(r, "measurement"))?,
             observable_parameters: op.map_or(vec![], |k| placeholder_values(&row[k])),
             noise_parameters: np.map_or(vec![], |k| placeholder_values(&row[k])),
@@ -261,10 +262,16 @@ mod tests {
         let m = &def.measurements[0];
         assert!(matches!(&m.observable_parameters[..], [Value::Par(a), Value::Num(b)] if a == "scale" && *b == 2.5));
         assert!(matches!(m.noise_parameters[..], [Value::Num(x)] if x == 0.1));
-        // features not supported yet are refused with their place
-        write_problem(&dir, "observableId\tpreequilibrationConditionId\tsimulationConditionId\ttime\tmeasurement\nobsA\tc1\tc2\t1\t2\n");
+        // pre-equilibration conditions and steady-state times (inf) are read
+        write_problem(&dir, "observableId\tpreequilibrationConditionId\tsimulationConditionId\ttime\tmeasurement\nobsA\tc1\tc2\t1\t2\nobsA\t\tc2\tinf\t2\n");
+        let def = load(&dir.join("problem.yaml")).unwrap();
+        assert_eq!((def.measurements[0].preeq_condition.as_str(), def.measurements[1].preeq_condition.as_str()), ("c1", ""));
+        assert_eq!(def.measurements[1].time, f64::INFINITY);
+        Problem::new(def).unwrap();
+        // what is not supported is refused with its place
+        write_problem(&dir, "observableId\tsimulationConditionId\ttime\tmeasurement\nobsA\tc1\t-inf\t2\n");
         let err = load(&dir.join("problem.yaml")).err().unwrap();
-        assert!(err.contains("measurement table, row 1") && err.contains("preequilibrationConditionId"), "{err}");
+        assert!(err.contains("measurement table, row 1") && err.contains("time"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -90,6 +90,29 @@ def test_gradient_and_jacobian_match_finite_differences():
         np.testing.assert_allclose(J[:, k], fdr, rtol=1e-5, atol=1e-7)
 
 
+def test_preequilibration_and_steady_state():
+    # pre-equilibrated with X0 = 5 (S1 = 5 k1 / k2), then X0 = 10; time inf: the steady state 10 k1 / k2
+    p = fit.Problem.from_antimony(MODEL)
+    p.add_parameter('k1', 'log10', 1e-3, 1e3, 1.0)
+    p.add_parameter('k2', 'log10', 1e-3, 1e3, 1.0)
+    p.add_condition('full')
+    p.add_condition('half', {'X0': 5})
+    p.add_observable('y', 'S1', '0.1')
+    times = np.array([0.0, 1.0, 4.0, np.inf])
+    p.add_measurements('full', 'y', times, np.ones(4), preequilibration='half')
+    p.rtol, p.atol = 1e-11, 1e-14
+    th = np.array([np.log10(K1), np.log10(K2)])
+    lo, hi = 5 * K1 / K2, 10 * K1 / K2
+    want = hi + (lo - hi) * np.exp(-K2 * times[:3])
+    np.testing.assert_allclose(p.simulate(th), list(want) + [hi], rtol=1e-8)
+    f, g = p.gradient(th)
+    for k in range(2):
+        e = np.eye(2)[k] * 1e-6
+        assert g[k] == pytest.approx((p.objective(th + e) - p.objective(th - e)) / 2e-6, rel=1e-5)
+    pytest.importorskip('pandas')
+    assert list(p.measurement_table()['preequilibrationConditionId']) == ['half'] * 4
+
+
 def test_multistart_recovers_and_is_deterministic():
     p = problem()
     calls = []

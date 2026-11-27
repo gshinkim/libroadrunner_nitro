@@ -242,6 +242,7 @@ pub struct Work {
     prevc: Vec<bool>, // value of each comparison inside the triggers at the current time
     pend: Vec<(f64, usize, Vec<f64>)>, // (execution time, event, values if fixed at trigger time)
     tmp: Vec<f64>,
+    sbak: Vec<f64>, // steady_state: the integrated state, restored when Newton fails from it
     amt: Vec<f64>, // SSA amounts
     bdf: Bdf,
     pub hist: Hist,
@@ -859,7 +860,7 @@ impl Model {
             yn: z(nx), dy: z(nx), fx: z(nx), f0: z(nx), k: std::array::from_fn(|_| z(nx)), jf: z(nx * nx), pivf: vec![0; nx],
             lo: vec![], up: vec![], xm: z(ni * nr),
             ra: self.aux.regs(), y0: z(nx), d1: z(nx), d2: z(nx), prev: vec![false; self.events.len()], prevc: vec![false; self.comps.len()],
-            pend: vec![], tmp: vec![], amt: z(nx), atol_scale: vec![1.0; nx], stats: [0; 4], ctl: Ctl::default(), rows: (vec![], vec![]), sens: None, loc_lo: 0.0,
+            pend: vec![], tmp: vec![], sbak: z(nx), amt: z(nx), atol_scale: vec![1.0; nx], stats: [0; 4], ctl: Ctl::default(), rows: (vec![], vec![]), sens: None, loc_lo: 0.0,
             bdf: Bdf { d: z((BDF_MAX + 3) * nx), jev: z(self.jac.len() + self.dt.len()), sc: std::array::from_fn(|_| z(nx)), ..Default::default() },
             hist: Hist { rd: Mutex::new(self.dtape.regs()), yt: Mutex::new(z(nx)), ..Default::default() },
             rng: Rng::new(0x5eed_e7e7),
@@ -1131,7 +1132,9 @@ impl Model {
     }
 
     /// Steady state from w.s (initial state, params loaded): Newton, else integrate towards it over
-    /// growing horizons. On success w.s, w.v, w.ev hold the solution.
+    /// growing horizons, with Newton from the integrated state after each. On success w.s, w.v, w.ev hold the
+    /// solution. Integration always continues from the integrated state, never from a failed Newton iterate
+    /// (which may be far off, or a negative steady state that was rejected).
     pub fn steady_state(&self, w: &mut Work) -> bool {
         self.totals(w);
         let o = NewtonOpts::default();
@@ -1139,7 +1142,10 @@ impl Model {
         for horizon in [0.0, 1.0, 10.0, 100.0, 1e3, 1e4, 1e5, 1e6] {
             if horizon > 0.0 && !self.integrate(w, t, horizon, &mut h, 1e-6, 1e-12) { break; }
             t = horizon;
+            w.sbak.copy_from_slice(&w.s);
             if self.newton_from_s(w, &o) { return true; }
+            let Work { s, sbak, .. } = w;
+            s.copy_from_slice(sbak);
         }
         false
     }
@@ -2376,6 +2382,18 @@ mod tests {
     }
 
     #[test]
+    fn steady_state_after_rejected_newton() {
+        // S' = 1 + S - S^2: Newton from S = 0 goes to the negative root (1 - sqrt 5) / 2, which is rejected; the
+        // integration must continue from the integrated state, not from that iterate, to reach (1 + sqrt 5) / 2
+        let m = Model::new(s(&["S"]), vec![0.], vec![1.], s(&["R1", "R2"]), s(&["a + b*S", "S*S"]), vec![1., -1.],
+                           s(&["a", "b"]), vec![1., 1.], Rules::default()).unwrap();
+        let mut w = m.work();
+        m.load(&mut w, &[], &[]);
+        assert!(m.steady_state(&mut w));
+        assert!((w.s[0] - (1.0 + 5f64.sqrt()) / 2.0).abs() < 1e-10, "{}", w.s[0]);
+    }
+
+    #[test]
     fn steady_state_and_simulation() {
         let m = moiety();
         let mut w = m.work();
@@ -2580,6 +2598,54 @@ impl Model {
         let ok = self.simulate(w, times, rtol, atol, outs, out);
         ok && !w.sens.as_deref().is_some_and(|st| st.failed)
     }
+
+    /// Sensitivities of the steady state in w.s (parameters loaded, Newton converged), by the implicit function
+    /// theorem: on entry w.sens.s holds the sensitivities of the state the steady state was reached from, on exit
+    /// those of the steady state (w.sens.c: the direction coefficients). The conserved totals keep the
+    /// sensitivities they have at the start, so with u = (their sensitivities at the dependent states, 0 elsewhere)
+    /// the independent states solve J_red s_ind = -(J u + df/dp c)_ind and s_dep = u_dep + L s_ind.
+    /// False if the reduced Jacobian is singular or a value is not finite.
+    pub fn steady_state_sens(&self, w: &mut Work) -> bool {
+        let (nx, np, ni) = (self.nx, self.pnames.len(), self.ni());
+        let Some(mut st) = w.sens.take() else { return false };
+        let ok = {
+            let Work { rr, rf, v, ev, s, hist, jr, piv, .. } = &mut *w;
+            self.full_at(hist, rf, v, ev, s, 0.0);
+            jr.fill(0.0);
+            for &(d, e, c) in &self.jred { jr[d as usize] += c * ev[e as usize]; }
+            if !lu(jr, ni, piv, 1e-15) {
+                false
+            } else {
+                self.sens_b(&mut st, s, &rr[nx..nx + np], 0.0);
+                let nd = st.nd;
+                let SensState { s: ss, b, r, yp, psi, .. } = &mut *st;
+                for f in 0..nd {
+                    let (sf, u) = (&ss[f * nx..(f + 1) * nx], &mut yp[f * nx..(f + 1) * nx]);
+                    u.fill(0.0);
+                    for (d, &i) in self.dep.iter().enumerate() {
+                        u[i] = sf[i] - self.lc[d].iter().map(|&(c, l)| l * sf[self.indep[c as usize]]).sum::<f64>();
+                    }
+                    let ju = &mut psi[f * nx..(f + 1) * nx];
+                    self.jac_mul(ev, u, ju);
+                    for (a, &i) in self.indep.iter().enumerate() { r[a * nd + f] = -(ju[i] + b[f * nx + i]); }
+                }
+                lu_solve(jr, ni, piv, &mut r[..ni * nd], nd);
+                for f in 0..nd {
+                    let sf = &mut ss[f * nx..(f + 1) * nx];
+                    for (a, &i) in self.indep.iter().enumerate() { sf[i] = r[a * nd + f]; }
+                    for (d, &i) in self.dep.iter().enumerate() {
+                        sf[i] = yp[f * nx + i] + self.lc[d].iter().map(|&(c, l)| l * r[c as usize * nd + f]).sum::<f64>();
+                    }
+                }
+                ss.iter().all(|x| x.is_finite())
+            }
+        };
+        w.sens = Some(st);
+        ok
+    }
+
+    /// Some rate depends on time explicitly (a steady state is then defined only at a given time).
+    pub fn time_dependent(&self) -> bool { !self.dt.is_empty() }
 
     /// out = J s, J from the Jacobian entries ev.
     fn jac_mul(&self, ev: &[f64], s: &[f64], out: &mut [f64]) {

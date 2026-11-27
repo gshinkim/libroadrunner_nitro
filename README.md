@@ -158,9 +158,9 @@ Complete examples: `examples/python/fit_simple.py` (the shortest: two rate const
 `examples/python/fit_basic.py` (the whole workflow on a small model, with a plot of the fit)
 and `examples/python/fit_petab.py problem.yaml` (any PEtab problem, including fitting with scipy's optimizers
 driven by the exact gradient). The same fitting is in the C library through `rrc_fit.h` (see
-`capi/examples/fit.c`). This is stage 1 of the
-work: models with events, PEtab placeholders, pre-equilibration and priors come later and are refused with a
-clear error until then.
+`capi/examples/fit.c`). PEtab placeholders, pre-equilibration and steady-state measurements (time `inf`) are
+supported; models with events, priors, and problems too large for forward sensitivities come later and are
+refused with a clear error until then.
 
 ---
 

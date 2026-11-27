@@ -45,7 +45,7 @@ def amici_refs(path):
 def stage_of(msg):
     for key, stage in [('placeholders', 'stage 2: placeholders'), ('pre-equilibration', 'stage 2: pre-equilibration'),
                        ('steady-state', 'stage 2: steady-state measurements'), ('priors', 'stage 3: priors'),
-                       ('events', 'stage 4: events'), ('compartment', 'stage 1: compartment sizes'),
+                       ('events', 'stage 4: events'), ('adjoint', 'later: adjoint sensitivities'), ('compartment', 'stage 1: compartment sizes'),
                        ('stage 2', 'stage 2: other')]:
         if key in msg:
             return stage
@@ -61,22 +61,25 @@ def read_tsv(path):
 def compare_simulations(p, theta, sim_path):
     """Our simulation of every measurement against AMICI's (simulations.tsv in the collection): (max, median)
     relative difference |ours - AMICI| / max(|AMICI|, 1e-6 * the largest |AMICI| of that observable), and how rows
-    were matched. Rows match by (condition, observable, time) when the file's keys agree with the measurement table;
-    otherwise by position when the row counts and times agree (some files were written from earlier versions of a
-    problem, with other condition or observable names, or other column names). None if neither works."""
+    were matched. Rows match by (pre-equilibration condition, condition, observable, time) when the file's keys agree
+    with the measurement table; otherwise by position when the row counts and times agree (some files were written
+    from earlier versions of a problem, with other condition or observable names, or other column names). None if
+    neither works."""
     ours = p.simulate(theta)
     meas = p._p.measurements
     rows = read_tsv(sim_path)
     col = lambda r, *names: next((r[n] for n in names if n in r), '')
+    has_pre = bool(rows) and 'preequilibrationConditionId' in rows[0]
+    pre = p._p.preequilibration_conditions if has_pre else [''] * len(meas)
     ref = [(col(r, 'simulationConditionId', 'simulationCondition'), col(r, 'observableId'), float(col(r, 'time')),
-            float(col(r, 'simulation'))) for r in rows]
+            float(col(r, 'simulation')), col(r, 'preequilibrationConditionId') if has_pre else '') for r in rows]
     by_key = {}
-    for c, o, t, v in ref:
-        by_key.setdefault((c, o, t), []).append(v)
+    for c, o, t, v, pc in ref:
+        by_key.setdefault((pc if pc.lower() != 'nan' else '', c, o, t), []).append(v)
     matched, how = [], 'keys'
     used = {}
-    for (c, o, t, _), y in zip(meas, ours):
-        k = (c, o, t)
+    for (c, o, t, _), pc, y in zip(meas, pre, ours):
+        k = (pc, c, o, t)
         i = used.get(k, 0)
         used[k] = i + 1
         vs = by_key.get(k)
@@ -85,7 +88,7 @@ def compare_simulations(p, theta, sim_path):
             break
         matched.append((o, y, vs[i]))
     if matched is None:
-        if len(ref) != len(meas) or any(abs(t - rt) > 1e-6 * max(1.0, abs(t)) for (_, _, t, _), (_, _, rt, _) in zip(meas, ref)):
+        if len(ref) != len(meas) or any(t != rt and abs(t - rt) > 1e-6 * max(1.0, abs(t)) for (_, _, t, _), (_, _, rt, _, _) in zip(meas, ref)):
             return None
         matched, how = [(o, y, r[3]) for (_, o, _, _), y, r in zip(meas, ours, ref)], 'rows'
     scale = {}

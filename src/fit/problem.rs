@@ -19,6 +19,9 @@ use std::collections::{HashMap, HashSet};
 use std::f64::consts::{LN_10, PI};
 use std::sync::{Arc, Mutex, OnceLock};
 
+/// Largest working memory (bytes) a problem may need; larger problems are refused when compiled.
+const SCRATCH_LIMIT: f64 = 8.0 * (1u64 << 30) as f64;
+
 /// Parameter scale, also used for observable transformations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scale { Lin, Log, Log10 }
@@ -76,8 +79,13 @@ pub struct ObservableDef { pub id: String, pub formula: String, pub noise_formul
 
 #[derive(Clone, Debug, Default)]
 pub struct Measurement {
+    /// simulation condition
     pub condition: String,
+    /// pre-equilibration condition ("" = none): the simulation starts from its steady state, except the states the
+    /// simulation condition sets
+    pub preeq_condition: String,
     pub observable: String,
+    /// output time; inf = at the steady state reached from the last finite output time
     pub time: f64,
     pub value: f64,
     /// values of the observable's `observableParameter{n}_{observableId}` placeholders, n = 1, 2, ... (numbers or parameter ids)
@@ -101,18 +109,31 @@ pub struct ProblemDef {
 #[derive(Clone, Copy, Debug)]
 enum Slot { Const(f64), Par(usize, f64) }
 
-struct Cond {
+/// A row of the condition table, compiled.
+struct TCond {
     id: String,
     /// pre-tape leaves: [model parameters (np) | initial states (nx)]
     leaf: Vec<Slot>,
-    /// per state: its initial value is given (overrides an initial assignment)
+    /// per state: its initial value is given (overrides an initial assignment, and a pre-equilibrated value)
     fixed_init: Vec<bool>,
     /// model parameters whose value is given here (a compartment size): kept even if an initial assignment sets them
     fixed_par: Vec<usize>,
     /// the compiled model: 0 the problem's, i > 0 compartment_models[i - 1] (compartment sizes set)
     model: usize,
-    /// 0, then the distinct measurement times
+}
+
+/// One simulation: a simulation condition, optionally after pre-equilibration in another condition.
+struct Cond {
+    /// for messages: the simulation condition, with its pre-equilibration condition if any
+    id: String,
+    /// table conditions (indices into `Problem::tconds`)
+    sim: usize,
+    pre: Option<usize>,
+    model: usize,
+    /// 0, then the distinct finite measurement times, then inf if a measurement is at steady state
     times: Vec<f64>,
+    /// number of finite times
+    nfin: usize,
     /// (time index, observable, measurement index)
     meas: Vec<(usize, usize, usize)>,
 }
@@ -130,6 +151,8 @@ struct CondScratch {
     regs: Vec<f64>,   // pre-tape registers
     vals: Vec<f64>,   // [p_eff | x0]
     dpre: Vec<f64>,   // d [p_eff | x0] / d theta, (np + nx) x nf
+    pvals: Vec<f64>,  // vals and dpre of the pre-equilibration condition (empty without one)
+    pdpre: Vec<f64>,
     x: Vec<f64>,      // states at the output times, nt x nx
     oregs: Vec<f64>,  // observable-tape registers
     dleaf: Vec<(usize, usize, f64)>,
@@ -170,6 +193,7 @@ pub struct Problem {
     obs_time: usize,
     /// per measurement: (placeholder leaf - ph_base, the number or parameter filling it)
     ph: Vec<Vec<(u32, Slot)>>,
+    tconds: Vec<TCond>,
     conds: Vec<Cond>,
     base_keys: Vec<Key>,
     dir_ks: Vec<usize>,
@@ -454,10 +478,10 @@ impl Problem {
         }
         let mut compartment_models: Vec<Model> = vec![];
         let mut model_keys: Vec<Vec<(String, u64)>> = vec![vec![]];
-        let mut conds = vec![];
+        let mut tconds = vec![];
         let mut cidx: HashMap<&str, usize> = HashMap::new();
         for (cid, entries) in &def.conditions {
-            if cidx.insert(cid.as_str(), conds.len()).is_some() { return Err(format!("condition table: '{cid}' appears twice")); }
+            if cidx.insert(cid.as_str(), tconds.len()).is_some() { return Err(format!("condition table: '{cid}' appears twice")); }
             // this condition's compartment sizes, and its compiled model
             let mut comp = base_comp.clone();
             for (target, v) in entries {
@@ -508,15 +532,38 @@ impl Problem {
                     None => return Err(format!("{what}: not a parameter, species or compartment of the model")),
                 }
             }
-            conds.push(Cond { id: cid.clone(), leaf, fixed_init, fixed_par, model: mi, times: vec![0.0], meas: vec![] });
+            tconds.push(TCond { id: cid.clone(), leaf, fixed_init, fixed_par, model: mi });
         }
+        // simulations: one per (pre-equilibration condition, simulation condition) pair measured
+        let mut conds: Vec<Cond> = vec![];
+        let mut sidx: HashMap<(Option<usize>, usize), usize> = HashMap::new();
         let mut ph: Vec<Vec<(u32, Slot)>> = Vec::with_capacity(def.measurements.len());
         for (q, ms) in def.measurements.iter().enumerate() {
             let what = format!("measurement {}", q + 1);
-            let &c = cidx.get(ms.condition.as_str()).ok_or(format!("{what}: unknown condition '{}'", ms.condition))?;
+            let &sc = cidx.get(ms.condition.as_str()).ok_or(format!("{what}: unknown condition '{}'", ms.condition))?;
+            let pc = match ms.preeq_condition.as_str() {
+                "" => None,
+                id => Some(*cidx.get(id).ok_or(format!("{what}: unknown pre-equilibration condition '{id}'"))?),
+            };
             let &o = oidx.get(ms.observable.as_str()).ok_or(format!("{what}: unknown observable '{}'", ms.observable))?;
-            if ms.time.is_infinite() { return Err(format!("{what}: steady-state measurements (time inf) are not supported yet")); }
-            if !(ms.time >= 0.0) { return Err(format!("{what}: time must be >= 0")); }
+            if !(ms.time >= 0.0) { return Err(format!("{what}: time must be >= 0 (or inf: at steady state)")); }
+            let mi = tconds[sc].model;
+            if let Some(p) = pc {
+                if tconds[p].model != mi {
+                    return Err(format!("{what}: pre-equilibration condition '{}' and simulation condition '{}' set different compartment sizes",
+                                       tconds[p].id, tconds[sc].id));
+                }
+            }
+            // A steady state of a model whose rates change with time is not defined. Pre-equilibration takes it with
+            // time fixed at 0, where the experiment starts; after a time course there is no such time.
+            if ms.time.is_infinite() && (if mi == 0 { m } else { &compartment_models[mi - 1] }).time_dependent() {
+                return Err(format!("{what}: a steady-state measurement (time inf) needs rates that do not depend on time"));
+            }
+            let c = *sidx.entry((pc, sc)).or_insert_with(|| {
+                let id = match pc { Some(p) => format!("{}' after pre-equilibration in '{}", tconds[sc].id, tconds[p].id), None => tconds[sc].id.clone() };
+                conds.push(Cond { id, sim: sc, pre: pc, model: mi, times: vec![], nfin: 0, meas: vec![] });
+                conds.len() - 1
+            });
             if !ms.value.is_finite() { return Err(format!("{what}: measurement must be a finite number")); }
             if def.observables[o].transform != Scale::Lin && !(ms.value > 0.0) {
                 return Err(format!("{what}: a {}-transformed observable needs measurements > 0", def.observables[o].transform.name()));
@@ -543,16 +590,18 @@ impl Problem {
             ts.sort_by(f64::total_cmp);
             ts.dedup();
             for e in &mut c.meas { e.0 = ts.partition_point(|&t| t < def.measurements[e.2].time); }
+            c.nfin = ts.iter().filter(|t| t.is_finite()).count();
             c.times = ts;
         }
-        conds.retain(|c| !c.meas.is_empty());
 
         // which p_eff depend on a free parameter somewhere: those get a coefficient in the sensitivity model
         let is_free_leaf = |s: &Slot| matches!(s, Slot::Par(j, _) if def.params[*j].estimate);
         let mut dep = vec![false; np];
         for c in &conds {
-            for &(row, l) in &pre_d {
-                if (row as usize) < np && is_free_leaf(&c.leaf[l as usize]) { dep[row as usize] = true; }
+            for tc in std::iter::once(c.sim).chain(c.pre).map(|i| &tconds[i]) {
+                for &(row, l) in &pre_d {
+                    if (row as usize) < np && is_free_leaf(&tc.leaf[l as usize]) { dep[row as usize] = true; }
+                }
             }
         }
         let dir_ks: Vec<usize> = (0..np).filter(|&k| dep[k]).collect();
@@ -573,6 +622,19 @@ impl Problem {
                 if free_dep { least_squares = false; }
             }
         }
+        // Working memory: each simulation keeps its own scratch (dense Jacobian-sized matrices, derivatives of its
+        // values, forward sensitivities of every free parameter). Refused above a limit rather than exhaust memory.
+        {
+            let (nf, ni, nl) = (free.len() as f64, m.ni() as f64, (np + nx) as f64);
+            let x = nx as f64;
+            let per = |pre: bool| 8.0 * (3.0 * x * x + ni * ni + ni * m.nr as f64 + (1.0 + pre as u8 as f64) * nl * nf + 20.0 * nf * x);
+            let total: f64 = conds.iter().map(|c| per(c.pre.is_some())).sum();
+            if total > SCRATCH_LIMIT {
+                return Err(format!("too large for forward sensitivities: about {:.0} GB of working memory ({} simulations, {nx} states, \
+                                    {} free parameters); problems this size need adjoint sensitivities (later)",
+                                   total / 1e9, conds.len(), free.len()));
+            }
+        }
         let base_keys = (0..np).map(Key::Par).chain((0..nx).map(Key::Spec)).collect();
         let mut fpos = vec![None; def.params.len()];
         for (f, &j) in free.iter().enumerate() { fpos[j] = Some(f); }
@@ -582,7 +644,7 @@ impl Problem {
         }
         Ok(Problem {
             params: def.params, free, observables: def.observables, measurements: def.measurements, least_squares,
-            rtol: 1e-8, atol: 1e-12, extras, pre, pre_d, obs, obs_d, ph_base, obs_time: ph_base + nph, ph, conds, base_keys, dir_ks,
+            rtol: 1e-8, atol: 1e-12, extras, pre, pre_d, obs, obs_d, ph_base, obs_time: ph_base + nph, ph, tconds, conds, base_keys, dir_ks,
             sens: (0..=compartment_models.len()).map(|_| OnceLock::new()).collect(), compartment_models,
             fpos, loc, state_outs: (0..nx as u32).collect(), pool: Mutex::new(vec![]), model,
         })
@@ -612,6 +674,7 @@ impl Problem {
             let nt = c.times.len();
             CondScratch {
                 w: self.model_of(c.model).work(), regs: self.pre.regs(), vals: vec![0.0; nl], dpre: vec![0.0; nl * nf], x: vec![0.0; nt * nx],
+                pvals: if c.pre.is_some() { vec![0.0; nl] } else { vec![] }, pdpre: if c.pre.is_some() { vec![0.0; nl * nf] } else { vec![] },
                 oregs: self.obs.regs(), dleaf: Vec::with_capacity(nl), dextra: Vec::with_capacity(self.extras.len()),
                 st: None,
                 pred: vec![0.0; c.meas.len() * (2 + 2 * nf)], err: None,
@@ -630,13 +693,13 @@ impl Problem {
         r
     }
 
-    /// One condition: fills cs.pred for its measurements, with the derivatives if `grad`.
-    fn condition(&self, c: &Cond, cs: &mut CondScratch, pv: &[f64], dpv: &[f64], grad: bool) -> Result<(), String> {
-        let m = self.model_of(c.model);
-        let (nx, np, nf) = (m.nx, m.pnames.len(), self.free.len());
+    /// Effective parameters and initial state of table condition `c` into vals, with their derivatives into dpre if
+    /// `grad`.
+    #[allow(clippy::too_many_arguments)]
+    fn pre_values(&self, c: &TCond, regs: &mut [f64], vals: &mut [f64], dpre: &mut [f64], dleaf: &mut Vec<(usize, usize, f64)>,
+                  pv: &[f64], dpv: &[f64], grad: bool) {
+        let (nx, np, nf) = (self.model.nx, self.model.pnames.len(), self.free.len());
         let nl = np + nx;
-        let CondScratch { w, regs, vals, dpre, x, oregs, dleaf, dextra, st, pred, .. } = cs;
-        // pre-tape leaves and their derivatives
         dleaf.clear();
         for (l, s) in c.leaf.iter().enumerate() {
             regs[l] = match *s {
@@ -661,23 +724,78 @@ impl Problem {
             }
             for &(l, f, dl) in dleaf.iter() { if l >= np && c.fixed_init[l - np] { dpre[l * nf + f] += dl; } }
         }
+    }
+
+    /// One simulation: fills cs.pred for its measurements, with the derivatives if `grad`.
+    fn condition(&self, c: &Cond, cs: &mut CondScratch, pv: &[f64], dpv: &[f64], grad: bool) -> Result<(), String> {
+        let m = self.model_of(c.model);
+        let (nx, np, nf) = (m.nx, m.pnames.len(), self.free.len());
+        let nk = self.dir_ks.len();
+        let CondScratch { w, regs, vals, dpre, pvals, pdpre, x, oregs, dleaf, dextra, st, pred, .. } = cs;
+        let tc = &self.tconds[c.sim];
+        self.pre_values(tc, regs, vals, dpre, dleaf, pv, dpv, grad);
+        if grad { st.get_or_insert_with(|| Box::new(m.sens_state(self.sens_setup(c.model), nf))); }
+        // sensitivities start from the derivatives of a condition's values
+        let seed = |sv: &mut SensState, d: &[f64]| {
+            for f in 0..nf {
+                for i in 0..nx { sv.s[f * nx + i] = d[(np + i) * nf + f]; }
+                for (q, &k) in self.dir_ks.iter().enumerate() { sv.c[f * nk + q] = d[k * nf + f]; }
+            }
+        };
+        // the steady state from w.s (parameters loaded), with its sensitivities from those in st if `grad`
+        let steady = |w: &mut Work, st: &mut Option<Box<SensState>>| -> bool {
+            if !m.steady_state(w) { return false; }
+            if !grad { return true; }
+            w.sens = st.take();
+            let ok = m.steady_state_sens(w);
+            *st = w.sens.take();
+            ok
+        };
+        // pre-equilibration: the steady state of the pre-equilibration condition, from which the simulation starts
+        // (states the simulation condition sets excepted)
+        if let Some(p) = c.pre {
+            self.pre_values(&self.tconds[p], regs, pvals, pdpre, dleaf, pv, dpv, grad);
+            m.load(w, &self.base_keys, pvals);
+            if let Some(sv) = st.as_deref_mut() { if grad { seed(sv, pdpre); } }
+            if !steady(w, st) { return Err(format!("no steady state in pre-equilibration for condition '{}'", c.id)); }
+            for i in 0..nx {
+                if tc.fixed_init[i] { continue; }
+                vals[np + i] = w.s[i];
+                if let Some(sv) = st.as_deref() { if grad { for f in 0..nf { dpre[(np + i) * nf + f] = sv.s[f * nx + i]; } } }
+            }
+        }
         // the model, with the sensitivities of every free parameter integrated alongside it if `grad`
         m.load(w, &self.base_keys, vals);
+        let fin = &c.times[..c.nfin];
         let ok = if grad {
-            let sv = st.get_or_insert_with(|| Box::new(m.sens_state(self.sens_setup(c.model), nf)));
-            let nk = self.dir_ks.len();
-            for f in 0..nf {
-                for i in 0..nx { sv.s[f * nx + i] = dpre[(np + i) * nf + f]; }
-                for (q, &k) in self.dir_ks.iter().enumerate() { sv.c[f * nk + q] = dpre[k * nf + f]; }
-            }
+            let sv = st.as_deref_mut().unwrap();
+            seed(sv, dpre);
             w.sens = st.take();
-            let ok = m.simulate_sens(w, &c.times, self.rtol, self.atol, &self.state_outs, x);
+            let ok = m.simulate_sens(w, fin, self.rtol, self.atol, &self.state_outs, &mut x[..c.nfin * nx]);
             *st = w.sens.take();
             ok
         } else {
-            m.simulate(w, &c.times, self.rtol, self.atol, &self.state_outs, x)
+            m.simulate(w, fin, self.rtol, self.atol, &self.state_outs, &mut x[..c.nfin * nx])
         };
         if !ok { return Err(format!("simulation failed in condition '{}'", c.id)); }
+        // steady-state measurements: the steady state reached from the last finite time
+        if c.nfin < c.times.len() {
+            let last = c.nfin - 1;
+            w.s.copy_from_slice(&x[last * nx..c.nfin * nx]);
+            if let Some(sv) = st.as_deref_mut() {
+                if grad { let n = nf * nx; sv.s.copy_from_slice(&sv.out[last * n..c.nfin * n]); }
+            }
+            if !steady(w, st) { return Err(format!("no steady state in condition '{}'", c.id)); }
+            x[c.nfin * nx..].copy_from_slice(&w.s);
+            if let Some(sv) = st.as_deref_mut() {
+                if grad {
+                    let n = nf * nx;
+                    sv.out.resize(c.times.len() * n, 0.0);
+                    let (o, s) = (&mut sv.out, &sv.s);
+                    o[c.nfin * n..].copy_from_slice(s);
+                }
+            }
+        }
         // observables, noise and their derivatives
         oregs[nx..nx + np].copy_from_slice(&vals[..np]);
         dextra.clear();

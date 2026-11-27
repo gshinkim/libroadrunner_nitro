@@ -71,9 +71,16 @@ C_DECL_SPEC bool rrcCallConv fitAddCondition(FitProblemHandle p, const char* id,
 C_DECL_SPEC bool rrcCallConv fitAddObservable(FitProblemHandle p, const char* id, const char* formula, const char* noiseFormula,
                                               const char* transformation, const char* noiseDistribution);
 
-/** Add n measurements of one observable in one condition at times (>= 0). */
+/** Add n measurements of one observable in one condition at times (>= 0; INFINITY: at the steady state reached
+ *  from the last finite time). */
 C_DECL_SPEC bool rrcCallConv fitAddMeasurements(FitProblemHandle p, const char* conditionId, const char* observableId,
                                                 int n, const double* times, const double* values);
+
+/** As fitAddMeasurements, the simulation starting from the steady state of condition preequilibrationId (states
+ *  that conditionId sets excepted). */
+C_DECL_SPEC bool rrcCallConv fitAddPreequilibratedMeasurements(FitProblemHandle p, const char* preequilibrationId,
+                                                               const char* conditionId, const char* observableId,
+                                                               int n, const double* times, const double* values);
 
 /** Integrator tolerances of every simulation (default rtol 1e-8, atol 1e-12). */
 C_DECL_SPEC bool rrcCallConv fitSetTolerances(FitProblemHandle p, double rtol, double atol);

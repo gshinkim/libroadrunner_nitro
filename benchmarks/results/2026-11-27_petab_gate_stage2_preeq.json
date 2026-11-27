@@ -1,0 +1,792 @@
+{
+ "meta": {
+  "roadrunner_nitro": "develop after 31bd7f0: pre-equilibration, steady-state measurements, steady-state sensitivities (implicit function theorem on the conservation-reduced system), steady_state restarts integration from the integrated state after a rejected Newton",
+  "python": "3.12.10",
+  "date": "2026-11-27",
+  "collection": "Benchmarking-Initiative/Benchmark-Models-PEtab @ 49900951 (2026-11-09)",
+  "amici_reference": "AMICI-dev/AMICI main tests/benchmark_models/benchmark_models.yaml (fetched 2026-11-27)",
+  "threads": "RAYON_NUM_THREADS=10 of 20",
+  "machine": "Herbert's Windows desktop",
+  "notes": "Zheng simulations.tsv copies the measurements (not simulations); Brannmark TwoSteps after t=4: AMICI simulations differ by 1.4e-5, libroadrunner 2.9.1 agrees with ours to 1e-11"
+ },
+ "problems": [
+  {
+   "problem": "Alkan_SciSignal2018",
+   "loaded": true,
+   "load_s": 0.05995689891278744,
+   "n_free": 44,
+   "n_meas": 1733,
+   "least_squares": true,
+   "nllh_nominal": 68.65064521439542,
+   "sim_max_rel_err": 8.37174222421702e-07,
+   "sim_median_rel_err": 2.6281900949588394e-09,
+   "sim_match": "keys",
+   "gradient": {
+    "max_rel_err": 1.3871359956276777e-05,
+    "directional": true,
+    "grad_norm": 220.08247855544315
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 3.940464373575203e-08,
+    "directional": true,
+    "grad_norm": 618024.3167551446
+   },
+   "t_objective_s": 0.008022300899028778,
+   "t_gradient_s": 0.4237887002527714,
+   "wall_s": 5.068682100623846
+  },
+  {
+   "problem": "Armistead_CellDeathDis2024",
+   "loaded": true,
+   "load_s": 0.04499590024352074,
+   "n_free": 14,
+   "n_meas": 58,
+   "least_squares": false,
+   "nllh_nominal": -301.91618165235406,
+   "sim_max_rel_err": 2.4712533910903428e-08,
+   "sim_median_rel_err": 0.0,
+   "sim_match": "keys",
+   "gradient": {
+    "max_rel_err": 0.0071270623248837735,
+    "worst": "k4",
+    "grad_norm": 2.1450971560034455,
+    "norm_rel_err": 4.3859952009553744e-05
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 1.612518832662559e-08,
+    "worst": "k4",
+    "grad_norm": 547.6277395164948,
+    "norm_rel_err": 1.480081123320536e-09
+   },
+   "t_objective_s": 0.00016750022768974304,
+   "t_gradient_s": 0.001045500859618187,
+   "wall_s": 0.5279786009341478
+  },
+  {
+   "problem": "Bachmann_MSB2011",
+   "loaded": false,
+   "refused": "parameter table, row 27 (line 28), column 'objectivePriorType': priors come in stage 3",
+   "blocked_by": "stage 3: priors",
+   "wall_s": 0.4054423999041319
+  },
+  {
+   "problem": "Beer_MolBioSystems2014",
+   "loaded": true,
+   "load_s": 0.13532479852437973,
+   "n_free": 72,
+   "n_meas": 27132,
+   "least_squares": false,
+   "nllh_nominal": -58622.91363900954,
+   "sim_max_rel_err": 3.47488060463826e-05,
+   "sim_median_rel_err": 6.5777206695883165e-09,
+   "sim_match": "keys",
+   "amici_nllh": -58622.9145631413,
+   "nllh_diff": 0.0009241317602572963,
+   "gradient": {
+    "max_rel_err": 0.0003109423775785043,
+    "directional": true,
+    "grad_norm": 1201.1152910573069
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 1.7242072351304567e-07,
+    "directional": true,
+    "grad_norm": 51538049289.41967
+   },
+   "t_objective_s": 0.0022641997784376144,
+   "t_gradient_s": 0.03259040042757988,
+   "wall_s": 1.3706465009599924
+  },
+  {
+   "problem": "Bertozzi_PNAS2020",
+   "loaded": true,
+   "load_s": 0.039371900260448456,
+   "n_free": 8,
+   "n_meas": 22,
+   "least_squares": false,
+   "nllh_nominal": 158.86426821020967,
+   "sim_max_rel_err": 7.726320854024224e-08,
+   "sim_median_rel_err": 1.0556005424673078e-08,
+   "sim_match": "keys",
+   "gradient": {
+    "max_rel_err": 0.003545864072439582,
+    "worst": "R0_CA",
+    "grad_norm": 0.04687085491145738,
+    "norm_rel_err": 3.641827786322127e-05
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 1.1065239597568796e-07,
+    "worst": "I0_NY",
+    "grad_norm": 2037.8995519191396,
+    "norm_rel_err": 7.09730567595621e-08
+   },
+   "t_objective_s": 6.460025906562805e-05,
+   "t_gradient_s": 0.00015889853239059448,
+   "wall_s": 0.4539167005568743
+  },
+  {
+   "problem": "Blasi_CellSystems2016",
+   "loaded": true,
+   "load_s": 0.003932399675250053,
+   "n_free": 9,
+   "n_meas": 252,
+   "least_squares": false,
+   "nllh_nominal": -642.8268965824387,
+   "sim_max_rel_err": 1.9075222518511323e-08,
+   "sim_median_rel_err": 7.025231704541946e-09,
+   "sim_match": "keys",
+   "gradient": {
+    "max_rel_err": 8.417880315461937e-08,
+    "worst": "a_k8",
+    "grad_norm": 3140.244097029622,
+    "norm_rel_err": 1.1576066287205576e-10
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 8.296422481670799e-09,
+    "worst": "a_k12k16_k8k12k16",
+    "grad_norm": 431033198.9002144,
+    "norm_rel_err": 9.673628156160105e-11
+   },
+   "t_objective_s": 1.5301629900932312e-05,
+   "t_gradient_s": 3.059953451156616e-05,
+   "wall_s": 0.40438560023903847
+  },
+  {
+   "problem": "Boehm_JProteomeRes2014",
+   "loaded": true,
+   "load_s": 0.0408053994178772,
+   "n_free": 9,
+   "n_meas": 48,
+   "least_squares": false,
+   "nllh_nominal": 138.2219986489741,
+   "sim_max_rel_err": 3.08080278977239e-08,
+   "sim_median_rel_err": 6.460840236939343e-09,
+   "sim_match": "keys",
+   "amici_nllh": 138.22199693517703,
+   "nllh_diff": 1.713797075808543e-06,
+   "gradient": {
+    "max_rel_err": 0.017164896089954366,
+    "worst": "k_imp_homo",
+    "grad_norm": 0.06880257854526313,
+    "norm_rel_err": 0.00016258011238104897
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 7.125314648320086e-06,
+    "worst": "k_imp_homo",
+    "grad_norm": 772800.003245221,
+    "norm_rel_err": 1.2719701462124961e-07
+   },
+   "t_objective_s": 0.00022990070283412933,
+   "t_gradient_s": 0.002047300338745117,
+   "wall_s": 0.5456837993115187
+  },
+  {
+   "problem": "Borghans_BiophysChem1997",
+   "loaded": true,
+   "load_s": 0.041189899668097496,
+   "n_free": 23,
+   "n_meas": 111,
+   "least_squares": false,
+   "nllh_nominal": -83.32368560534687,
+   "sim_max_rel_err": 2.406486809310438e-05,
+   "sim_median_rel_err": 5.371681313883044e-07,
+   "sim_match": "rows",
+   "amici_nllh": -83.3237191357272,
+   "nllh_diff": 3.353038033537814e-05,
+   "gradient": {
+    "max_rel_err": 0.0025758695446656955,
+    "directional": true,
+    "grad_norm": 177.93721721954148
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 3.813966191732072e-09,
+    "directional": true,
+    "grad_norm": 1133429.5603803638
+   },
+   "t_objective_s": 0.0010583996772766113,
+   "t_gradient_s": 0.01563419960439205,
+   "wall_s": 0.6534253004938364
+  },
+  {
+   "problem": "Brannmark_JBC2010",
+   "loaded": true,
+   "load_s": 0.0025629010051488876,
+   "n_free": 22,
+   "n_meas": 43,
+   "least_squares": false,
+   "nllh_nominal": 141.88920386033766,
+   "sim_max_rel_err": 1.361434860650728e-05,
+   "sim_median_rel_err": 1.2700499808776104e-07,
+   "sim_match": "keys",
+   "amici_nllh": 141.889113770537,
+   "nllh_diff": 9.008980066482764e-05,
+   "gradient": {
+    "max_rel_err": 0.007234307263156865,
+    "directional": true,
+    "grad_norm": 0.23604763635694578
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 3.394402640345452e-09,
+    "directional": true,
+    "grad_norm": 7935387.980143233
+   },
+   "t_objective_s": 0.000753398984670639,
+   "t_gradient_s": 0.007239099591970444,
+   "wall_s": 0.5649389997124672
+  },
+  {
+   "problem": "Bruno_JExpBot2016",
+   "loaded": true,
+   "load_s": 0.04094499908387661,
+   "n_free": 13,
+   "n_meas": 77,
+   "least_squares": true,
+   "nllh_nominal": -46.68818298145368,
+   "sim_max_rel_err": 2.441076374535259e-06,
+   "sim_median_rel_err": 1.0034133101880518e-07,
+   "sim_match": "keys",
+   "amici_nllh": -46.688176988431806,
+   "nllh_diff": -5.993021872541249e-06,
+   "gradient": {
+    "max_rel_err": 0.47217394793635903,
+    "worst": "init_ohb10_1",
+    "grad_norm": 0.0018796813360672452,
+    "norm_rel_err": 0.006890626772119913
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 1.9490575469799474e-07,
+    "worst": "kb2",
+    "grad_norm": 951999.8400883331,
+    "norm_rel_err": 6.760141931537145e-08
+   },
+   "t_objective_s": 0.00011860020458698273,
+   "t_gradient_s": 0.0005882997065782547,
+   "wall_s": 0.5070195998996496
+  },
+  {
+   "problem": "Chen_MSB2009",
+   "loaded": true,
+   "load_s": 0.14452530071139336,
+   "n_free": 155,
+   "n_meas": 120,
+   "least_squares": true,
+   "nllh_nominal": 130591.75295647368,
+   "sim_max_rel_err": 0.0027568466616526266,
+   "sim_median_rel_err": 0.00010912909177062204,
+   "sim_match": "keys",
+   "amici_nllh": 115700.1192629893,
+   "nllh_diff": 14891.633693484371,
+   "gradient": {
+    "max_rel_err": 2.9657776890948323e-07,
+    "directional": true,
+    "grad_norm": 705457.3338592001
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 7.052170842245862e-07,
+    "directional": true,
+    "grad_norm": 4866.786454033686
+   },
+   "t_objective_s": 0.5295302011072636,
+   "t_gradient_s": 17.714816000312567,
+   "wall_s": 216.49191679991782
+  },
+  {
+   "problem": "Crauste_CellSystems2017",
+   "loaded": true,
+   "load_s": 0.035817600786685944,
+   "n_free": 12,
+   "n_meas": 21,
+   "least_squares": true,
+   "nllh_nominal": 190.96449964694094,
+   "sim_max_rel_err": 0.00956511012958374,
+   "sim_median_rel_err": 0.0009110055340612186,
+   "sim_match": "keys",
+   "amici_nllh": 190.96521897435176,
+   "nllh_diff": -0.0007193274108203696,
+   "gradient": {
+    "max_rel_err": Infinity,
+    "worst": "rho_E",
+    "grad_norm": 747.0335344238188,
+    "norm_rel_err": NaN
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 2.782029801923213e-06,
+    "worst": "delta_EL",
+    "grad_norm": 3580711.7715608,
+    "norm_rel_err": 4.127542571549557e-07
+   },
+   "t_objective_s": 0.00033350102603435516,
+   "t_gradient_s": 0.0034730006009340286,
+   "wall_s": 0.610919401049614
+  },
+  {
+   "problem": "Elowitz_Nature2000",
+   "loaded": true,
+   "load_s": 0.0342079009860754,
+   "n_free": 21,
+   "n_meas": 58,
+   "least_squares": false,
+   "nllh_nominal": -63.20275053962971,
+   "sim_max_rel_err": 4.516090004207134e-06,
+   "sim_median_rel_err": 1.5613391732003065e-06,
+   "sim_match": "keys",
+   "amici_nllh": -63.20279991419332,
+   "nllh_diff": 4.937456360920578e-05,
+   "gradient": {
+    "max_rel_err": 7.806031117186428e-05,
+    "directional": true,
+    "grad_norm": 2.8349540909805673
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 4.7826635277933314e-09,
+    "directional": true,
+    "grad_norm": 366.241828994856
+   },
+   "t_objective_s": 0.0008190013468265533,
+   "t_gradient_s": 0.01270739920437336,
+   "wall_s": 0.6050780992954969
+  },
+  {
+   "problem": "Fiedler_BMCSystBiol2016",
+   "loaded": true,
+   "load_s": 0.05284100025892258,
+   "n_free": 22,
+   "n_meas": 72,
+   "least_squares": false,
+   "nllh_nominal": -58.58387254330201,
+   "sim_max_rel_err": 3.848478083697814e-07,
+   "sim_median_rel_err": 2.238642251366975e-08,
+   "sim_match": "keys",
+   "amici_nllh": -58.58390161681,
+   "nllh_diff": 2.907350799574715e-05,
+   "gradient": {
+    "max_rel_err": 1.734728977885913e-05,
+    "directional": true,
+    "grad_norm": 0.04178519639903536
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 4.004860589955768e-08,
+    "directional": true,
+    "grad_norm": 1774215.230552441
+   },
+   "t_objective_s": 0.00021739862859249115,
+   "t_gradient_s": 0.002841699868440628,
+   "wall_s": 0.5045950002968311
+  },
+  {
+   "problem": "Froehlich_CellSystems2018",
+   "loaded": false,
+   "refused": "too large for forward sensitivities: about 10200 GB of working memory (9169 simulations, 1228 states, 4231 free parameters); problems this size need adjoint sensitivities (later)",
+   "blocked_by": "later: adjoint sensitivities",
+   "wall_s": 13.588902600109577
+  },
+  {
+   "problem": "Fujita_SciSignal2010",
+   "loaded": true,
+   "load_s": 0.04425260052084923,
+   "n_free": 19,
+   "n_meas": 144,
+   "least_squares": true,
+   "nllh_nominal": -53.08377937691313,
+   "sim_max_rel_err": 0.38978083975738775,
+   "sim_median_rel_err": 0.003458339424830319,
+   "sim_match": "rows",
+   "amici_nllh": -53.08377736998929,
+   "nllh_diff": -2.0069238360065356e-06,
+   "gradient": {
+    "max_rel_err": 0.0035743234567826706,
+    "worst": "init_AKT",
+    "grad_norm": 5.307109492175026,
+    "norm_rel_err": 0.0002621622203987477
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 0.04912862173163339,
+    "worst": "reaction_9_k1",
+    "grad_norm": 6.676193195861581,
+    "norm_rel_err": 0.00010409506056983033
+   },
+   "t_objective_s": 0.0008156988769769669,
+   "t_gradient_s": 0.008941000327467918,
+   "wall_s": 0.8442148007452488
+  },
+  {
+   "problem": "Giordano_Nature2020",
+   "loaded": true,
+   "load_s": 0.05416079983115196,
+   "n_free": 50,
+   "n_meas": 313,
+   "least_squares": false,
+   "nllh_nominal": 287.62776135704195,
+   "sim_max_rel_err": 0.00018279496471881588,
+   "sim_median_rel_err": 2.342758045244738e-06,
+   "sim_match": "keys",
+   "gradient": {
+    "max_rel_err": 2.0886333295098435e-10,
+    "directional": true,
+    "grad_norm": 272.552552692006
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 5.6630981609621944e-08,
+    "directional": true,
+    "grad_norm": 3728.076620149689
+   },
+   "t_objective_s": 0.00041720084846019745,
+   "t_gradient_s": 0.008158201351761818,
+   "wall_s": 0.6396033000200987
+  },
+  {
+   "problem": "Isensee_JCB2018",
+   "loaded": false,
+   "refused": "parameter table, row 2 (line 3), column 'objectivePriorType': priors come in stage 3",
+   "blocked_by": "stage 3: priors",
+   "wall_s": 0.37909070029854774
+  },
+  {
+   "problem": "Lang_PLOSComputBiol2024",
+   "loaded": false,
+   "refused": "parameter table, row 343 (line 344), column 'objectivePriorType': priors come in stage 3",
+   "blocked_by": "stage 3: priors",
+   "wall_s": 0.3870085999369621
+  },
+  {
+   "problem": "Laske_PLOSComputBiol2019",
+   "loaded": true,
+   "load_s": 0.04048420116305351,
+   "n_free": 13,
+   "n_meas": 42,
+   "least_squares": false,
+   "nllh_nominal": 315.90591056500836,
+   "sim_max_rel_err": 6.18826535343728e-08,
+   "sim_median_rel_err": 8.877469512996112e-09,
+   "sim_match": "keys",
+   "gradient": {
+    "max_rel_err": 4.607819463480049e-06,
+    "worst": "k_syn_R_V",
+    "grad_norm": 44.91122137509383,
+    "norm_rel_err": 2.1477298057332528e-07
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 2.5580900163875463e-07,
+    "worst": "k_syn_R_M",
+    "grad_norm": 14990.092984028546,
+    "norm_rel_err": 3.922696169859161e-10
+   },
+   "t_objective_s": 0.004530798643827438,
+   "t_gradient_s": 0.05871330015361309,
+   "wall_s": 3.559297699481249
+  },
+  {
+   "problem": "Liu_IFACPapersOnLine2025",
+   "loaded": false,
+   "refused": "model: events are not supported yet (stage 4)",
+   "blocked_by": "stage 4: events",
+   "wall_s": 0.39697590097784996
+  },
+  {
+   "problem": "Lucarelli_CellSystems2018",
+   "loaded": true,
+   "load_s": 0.046320199966430664,
+   "n_free": 84,
+   "n_meas": 1755,
+   "least_squares": false,
+   "nllh_nominal": 1681.6059864334088,
+   "sim_max_rel_err": 1.7134442802221867e-07,
+   "sim_median_rel_err": 0.0,
+   "sim_match": "keys",
+   "amici_nllh": 1681.6059879426584,
+   "nllh_diff": -1.5092496141733136e-06,
+   "gradient": {
+    "max_rel_err": 0.015207635145885886,
+    "directional": true,
+    "grad_norm": 0.1643284850010932
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 1.4962940072612184e-07,
+    "directional": true,
+    "grad_norm": 1446857.573348799
+   },
+   "t_objective_s": 0.0014881007373332977,
+   "t_gradient_s": 0.13261529989540577,
+   "wall_s": 1.815573800355196
+  },
+  {
+   "problem": "Okuonghae_ChaosSolitonsFractals2020",
+   "loaded": true,
+   "load_s": 0.05080169998109341,
+   "n_free": 16,
+   "n_meas": 92,
+   "least_squares": false,
+   "nllh_nominal": 470490.5839537582,
+   "gradient": {
+    "max_rel_err": 2.0772668079608246e-08,
+    "worst": "asymptomatic_start",
+    "grad_norm": 21617656.415805724,
+    "norm_rel_err": 4.8637062758995415e-09
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 3.0641707789215137e-07,
+    "worst": "exposed_start",
+    "grad_norm": 6269685727.393175,
+    "norm_rel_err": 1.120196389016461e-08
+   },
+   "t_objective_s": 7.189996540546417e-05,
+   "t_gradient_s": 0.0010243002325296402,
+   "wall_s": 0.49854700081050396
+  },
+  {
+   "problem": "Oliveira_NatCommun2021",
+   "loaded": true,
+   "load_s": 0.04460289888083935,
+   "n_free": 12,
+   "n_meas": 120,
+   "least_squares": true,
+   "nllh_nominal": 9623398.690630605,
+   "gradient": {
+    "max_rel_err": 8.017066961209412e-08,
+    "worst": "gamma_u",
+    "grad_norm": 738947089.5002995,
+    "norm_rel_err": 1.8704210598978726e-09
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 2.046140004816235e-08,
+    "worst": "gamma_h",
+    "grad_norm": 2564209.6052641696,
+    "norm_rel_err": 1.4689717996586748e-10
+   },
+   "t_objective_s": 0.00020799972116947174,
+   "t_gradient_s": 0.0016429983079433441,
+   "wall_s": 0.5186122003942728
+  },
+  {
+   "problem": "Perelson_Science1996",
+   "loaded": true,
+   "load_s": 0.038635099306702614,
+   "n_free": 3,
+   "n_meas": 16,
+   "least_squares": false,
+   "nllh_nominal": 432.0385498112387,
+   "sim_max_rel_err": 0.449970448364104,
+   "sim_median_rel_err": 0.16793687307001676,
+   "sim_match": "keys",
+   "gradient": {
+    "max_rel_err": 6.040549180477723e-10,
+    "worst": "delta",
+    "grad_norm": 36.84136148783988,
+    "norm_rel_err": 6.776874794959284e-13
+   },
+   "gradient_off_optimum": {
+    "error": "measurement 16: undefined likelihood (observable -0.0000000020152044856344606, sigma 10000000)"
+   },
+   "t_objective_s": 9.560026228427887e-05,
+   "t_gradient_s": 0.0003316011279821396,
+   "wall_s": 0.44471869990229607
+  },
+  {
+   "problem": "Rahman_MBS2016",
+   "loaded": true,
+   "load_s": 0.040402499958872795,
+   "n_free": 9,
+   "n_meas": 23,
+   "least_squares": true,
+   "nllh_nominal": 21.15348998708298,
+   "sim_max_rel_err": 1.0515867981785439e-07,
+   "sim_median_rel_err": 1.1752769282641157e-08,
+   "sim_match": "keys",
+   "gradient": {
+    "max_rel_err": 1.3338057538468448e-06,
+    "worst": "treated_weak_improve_rate",
+    "grad_norm": 1.4762604121262273,
+    "norm_rel_err": 5.1310135483463676e-08
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 4.4136019644978844e-08,
+    "worst": "infected_weak_treatment_rate",
+    "grad_norm": 127523.24693482275,
+    "norm_rel_err": 9.890411569825021e-11
+   },
+   "t_objective_s": 0.00012600049376487732,
+   "t_gradient_s": 0.0011553000658750534,
+   "wall_s": 0.4801822993904352
+  },
+  {
+   "problem": "Raia_CancerResearch2011",
+   "loaded": true,
+   "load_s": 0.04715700075030327,
+   "n_free": 39,
+   "n_meas": 205,
+   "least_squares": false,
+   "nllh_nominal": 346.08978190650225,
+   "sim_max_rel_err": 5.180430574593819e-06,
+   "sim_median_rel_err": 5.057661993012398e-08,
+   "sim_match": "rows",
+   "gradient": {
+    "max_rel_err": 2.612679209884033e-05,
+    "directional": true,
+    "grad_norm": 26.516341870466626
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 2.212708160098435e-09,
+    "directional": true,
+    "grad_norm": 10168792.438857105
+   },
+   "t_objective_s": 0.0007835999131202698,
+   "t_gradient_s": 0.020313700661063194,
+   "wall_s": 0.6839949004352093
+  },
+  {
+   "problem": "Raimundez_PCB2020",
+   "loaded": false,
+   "refused": "parameter table, row 2 (line 3), column 'objectivePriorType': priors come in stage 3",
+   "blocked_by": "stage 3: priors",
+   "wall_s": 0.38094389997422695
+  },
+  {
+   "problem": "SalazarCavazos_MBoC2020",
+   "loaded": true,
+   "load_s": 0.07131709903478622,
+   "n_free": 6,
+   "n_meas": 18,
+   "least_squares": true,
+   "nllh_nominal": 367.1876089924514,
+   "sim_max_rel_err": 8.018425681029598e-09,
+   "sim_median_rel_err": 7.875431504956397e-10,
+   "sim_match": "keys",
+   "gradient": {
+    "max_rel_err": 3.135473472685452e-07,
+    "worst": "kdephosY1068__FREE",
+    "grad_norm": 26.405413840849327,
+    "norm_rel_err": 1.3249182726596604e-07
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 1.1239059598928193e-07,
+    "worst": "kdephosY1068__FREE",
+    "grad_norm": 39325.20087990997,
+    "norm_rel_err": 6.649495468552227e-10
+   },
+   "t_objective_s": 0.006909700110554695,
+   "t_gradient_s": 0.08744959905743599,
+   "wall_s": 2.552250299602747
+  },
+  {
+   "problem": "Schwen_PONE2014",
+   "loaded": false,
+   "refused": "parameter table, row 3 (line 4), column 'objectivePriorType': priors come in stage 3",
+   "blocked_by": "stage 3: priors",
+   "wall_s": 0.38181629963219166
+  },
+  {
+   "problem": "Smith_BMCSystBiol2013",
+   "loaded": false,
+   "refused": "model: events are not supported yet (stage 4)",
+   "blocked_by": "stage 4: events",
+   "wall_s": 0.431673901155591
+  },
+  {
+   "problem": "Sneyd_PNAS2002",
+   "loaded": true,
+   "load_s": 0.03891360014677048,
+   "n_free": 15,
+   "n_meas": 135,
+   "least_squares": false,
+   "nllh_nominal": -319.79177741102734,
+   "sim_max_rel_err": 0.529944998798795,
+   "sim_median_rel_err": 4.0357336116336324e-07,
+   "sim_match": "keys",
+   "amici_nllh": -319.79177818768756,
+   "nllh_diff": 7.766602152514679e-07,
+   "gradient": {
+    "max_rel_err": 0.007496894948313531,
+    "worst": "l_6",
+    "grad_norm": 1.7482699466218208,
+    "norm_rel_err": 7.520735314135039e-05
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 4.3788049353989425e-06,
+    "worst": "l4",
+    "grad_norm": 2654.727848869418,
+    "norm_rel_err": 1.6901003999206438e-08
+   },
+   "t_objective_s": 0.0006790999323129654,
+   "t_gradient_s": 0.004302101209759712,
+   "wall_s": 0.7958151996135712
+  },
+  {
+   "problem": "Weber_BMC2015",
+   "loaded": true,
+   "load_s": 0.0036011002957820892,
+   "n_free": 36,
+   "n_meas": 135,
+   "least_squares": false,
+   "nllh_nominal": 296.20179902716274,
+   "sim_max_rel_err": 5.973132424114917e-08,
+   "sim_median_rel_err": 2.7209000184824223e-09,
+   "sim_match": "keys",
+   "amici_nllh": 296.2017922646865,
+   "nllh_diff": 6.762476232324843e-06,
+   "gradient": {
+    "max_rel_err": 0.0018195429844154471,
+    "directional": true,
+    "grad_norm": 1.1501719487931072
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 6.72417293322531e-07,
+    "directional": true,
+    "grad_norm": 16640182.675964892
+   },
+   "t_objective_s": 0.000556599348783493,
+   "t_gradient_s": 0.012627799063920975,
+   "wall_s": 0.6043914016336203
+  },
+  {
+   "problem": "Zhao_QuantBiol2020",
+   "loaded": true,
+   "load_s": 0.04657519981265068,
+   "n_free": 28,
+   "n_meas": 82,
+   "least_squares": false,
+   "nllh_nominal": 777.344255960386,
+   "sim_max_rel_err": 2.8695017512339593e-07,
+   "sim_median_rel_err": 2.7011998659118254e-08,
+   "sim_match": "keys",
+   "gradient": {
+    "max_rel_err": 4.7114678433511055e-07,
+    "directional": true,
+    "grad_norm": 5252.42101171886
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 5.676834694365745e-10,
+    "directional": true,
+    "grad_norm": 1979943484614.8123
+   },
+   "t_objective_s": 0.00015289895236492157,
+   "t_gradient_s": 0.0014064982533454895,
+   "wall_s": 0.49628160148859024
+  },
+  {
+   "problem": "Zheng_PNAS2012",
+   "loaded": true,
+   "load_s": 0.005992298945784569,
+   "n_free": 46,
+   "n_meas": 60,
+   "least_squares": false,
+   "nllh_nominal": -278.33353155310067,
+   "sim_max_rel_err": 0.8965749981228093,
+   "sim_median_rel_err": 0.11209551001685808,
+   "sim_match": "keys",
+   "amici_nllh": -278.33353271001477,
+   "nllh_diff": 1.1569140951905865e-06,
+   "gradient": {
+    "max_rel_err": 0.005106916311915664,
+    "directional": true,
+    "grad_norm": 0.10527937637551828
+   },
+   "gradient_off_optimum": {
+    "max_rel_err": 1.5234254772265926e-09,
+    "directional": true,
+    "grad_norm": 19941.053340625393
+   },
+   "t_objective_s": 0.00028670020401477814,
+   "t_gradient_s": 0.014890799298882484,
+   "wall_s": 0.5711733009666204
+  }
+ ]
+}

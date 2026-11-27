@@ -93,10 +93,13 @@ impl PyFitProblem {
         Ok(())
     }
 
-    fn add_measurements(&mut self, condition: String, observable: String, times: Vec<f64>, values: Vec<f64>) -> PyResult<()> {
+    #[pyo3(signature = (condition, observable, times, values, preequilibration=None))]
+    fn add_measurements(&mut self, condition: String, observable: String, times: Vec<f64>, values: Vec<f64>,
+                        preequilibration: Option<String>) -> PyResult<()> {
         if times.len() != values.len() { return Err(verr("times and values differ in length".into())); }
+        let pre = preequilibration.unwrap_or_default();
         self.changed().measurements.extend(times.into_iter().zip(values).map(|(time, value)|
-            Measurement { condition: condition.clone(), observable: observable.clone(), time, value, ..Default::default() }));
+            Measurement { condition: condition.clone(), preeq_condition: pre.clone(), observable: observable.clone(), time, value, ..Default::default() }));
         Ok(())
     }
 
@@ -130,6 +133,10 @@ impl PyFitProblem {
     /// The measurements: [(condition, observable, time, value)].
     #[getter] fn measurements(&self) -> Vec<(String, String, f64, f64)> {
         self.def.measurements.iter().map(|m| (m.condition.clone(), m.observable.clone(), m.time, m.value)).collect()
+    }
+    /// The pre-equilibration condition of every measurement ("" = none).
+    #[getter] fn preequilibration_conditions(&self) -> Vec<String> {
+        self.def.measurements.iter().map(|m| m.preeq_condition.clone()).collect()
     }
     /// The observables: [(id, formula, noise formula, transformation, noise distribution)].
     #[getter] fn observables(&self) -> Vec<(String, String, String, String, String)> {

@@ -408,10 +408,92 @@ mod tests {
     }
 
     #[test]
-    fn refuses_unsupported() {
+    fn preequilibration() {
+        // inflow k0*u, outflow k1*S1: pre-equilibrated with u = 1 (S1 = k0/k1), then u = 3; condition "set" also
+        // sets S1(0) = 2, which overrides the pre-equilibrated value; "none" starts from the model's S1 = 0
+        let ant = "model pe
+            compartment C = 1
+            species S1 in C
+            J0: -> S1; k0*u
+            J1: S1 -> ; k1*S1
+            S1 = 0; k0 = 1; k1 = 0.5; u = 1
+        end";
+        let ms = |c: &str, pre: &str, t: f64| Measurement { condition: c.into(), preeq_condition: pre.into(), observable: "y".into(), time: t, value: 1.0, ..Default::default() };
+        let mut meas = vec![];
+        for &t in &TIMES { meas.extend([ms("up", "base", t), ms("set", "base", t), ms("up", "", t)]); }
+        let def = ProblemDef {
+            sbml: sbml(ant),
+            params: vec![par("k0", Scale::Log10, 0.01, 100.0, 1.0, true), par("k1", Scale::Log10, 0.01, 10.0, 0.5, true)],
+            conditions: vec![("base".into(), vec![("u".into(), Value::Num(1.0))]), ("up".into(), vec![("u".into(), Value::Num(3.0))]),
+                             ("set".into(), vec![("u".into(), Value::Num(3.0)), ("S1".into(), Value::Num(2.0))])],
+            observables: vec![obs("y", "S1", "0.1", Noise::Normal, Scale::Lin)],
+            measurements: meas,
+        };
+        let mut p = Problem::new(def).unwrap();
+        (p.rtol, p.atol) = (1e-11, 1e-14);
+        let (k0, k1) = (1.3f64, 0.4f64);
+        let theta = [k0.log10(), k1.log10()];
+        let y = p.simulate_measurements(&theta).unwrap();
+        let s1 = |x0: f64, t: f64| 3.0 * k0 / k1 + (x0 - 3.0 * k0 / k1) * (-k1 * t).exp();
+        for (q, &t) in TIMES.iter().enumerate() {
+            for (k, x0) in [k0 / k1, 2.0, 0.0].into_iter().enumerate() {
+                assert!((y[3 * q + k] - s1(x0, t)).abs() < 1e-8, "t {t}, case {k}: {} vs {}", y[3 * q + k], s1(x0, t));
+            }
+        }
+        fd_check(&p, &theta, 1e-5);
+    }
+
+    #[test]
+    fn steady_state_measurements() {
+        // A <-> B conserves A + B: the steady state depends on the initial state, B* = (A0 + B0) kf / (kf + kb),
+        // with A0 estimated. Measured at t = 2 and at steady state, also after pre-equilibration with kf = 0.6
+        // (pre-equilibration keeps the total).
+        let ant = "model ab
+            compartment C = 1
+            species A in C, B in C
+            J1: A -> B; kf*A
+            J2: B -> A; kb*B
+            A = 1; B = 0.5; kf = 1; kb = 0.5
+        end";
+        let ms = |c: &str, pre: &str, o: &str, t: f64| Measurement { condition: c.into(), preeq_condition: pre.into(), observable: o.into(), time: t, value: 1.0, ..Default::default() };
+        let mut meas = vec![];
+        for t in [2.0, f64::INFINITY] { for o in ["yA", "yB"] { meas.extend([ms("c", "", o, t), ms("c", "half", o, t)]); } }
+        let def = ProblemDef {
+            sbml: sbml(ant),
+            params: vec![par("kf", Scale::Log10, 0.01, 100.0, 1.0, true), par("kb", Scale::Log10, 0.01, 10.0, 0.5, true),
+                         par("A0", Scale::Lin, 0.1, 10.0, 1.0, true)],
+            conditions: vec![("c".into(), vec![("A".into(), Value::Par("A0".into()))]),
+                             ("half".into(), vec![("A".into(), Value::Par("A0".into())), ("kf".into(), Value::Num(0.6))])],
+            observables: vec![obs("yA", "A", "0.1", Noise::Normal, Scale::Lin), obs("yB", "B", "0.1", Noise::Normal, Scale::Lin)],
+            measurements: meas,
+        };
+        let mut p = Problem::new(def).unwrap();
+        (p.rtol, p.atol) = (1e-11, 1e-14);
+        let (kf, kb, a0) = (1.2f64, 0.7f64, 2.0f64);
+        let theta = [kf.log10(), kb.log10(), a0];
+        let y = p.simulate_measurements(&theta).unwrap();
+        let tot = a0 + 0.5;
+        let k = kf + kb;
+        // no pre-equilibration: B(t) = B* + (0.5 - B*) e^{-k t}
+        let bs = tot * kf / k;
+        let b2 = bs + (0.5 - bs) * (-k * 2.0).exp();
+        // pre-equilibrated with kf = 0.6: B(0) = tot 0.6 / (0.6 + kb), A(0) = A0 (set by the condition)
+        let bp = tot * 0.6 / (0.6 + kb);
+        let tot2 = a0 + bp;
+        let bs2 = tot2 * kf / k;
+        let b2p = bs2 + (bp - bs2) * (-k * 2.0).exp();
+        let want = [tot - b2, tot2 - b2p, b2, b2p, tot - bs, tot2 - bs2, bs, bs2];
+        for (q, (&a, &b)) in y.iter().zip(&want).enumerate() { assert!((a - b).abs() < 1e-8, "measurement {q}: {a} vs {b}"); }
+        fd_check(&p, &theta, 1e-5);
+        // a steady state of a model whose rates depend on time is not defined
         let mut def = decay_problem(0.0);
+        def.sbml = sbml(&DECAY.replace("k2*S2", "k2*S2*(1 + time)"));
         def.measurements[0].time = f64::INFINITY;
-        assert!(Problem::new(def).err().unwrap().contains("not supported yet"));
+        assert!(Problem::new(def).err().unwrap().contains("do not depend on time"));
+    }
+
+    #[test]
+    fn refuses_unsupported() {
         let mut def = decay_problem(0.0);
         def.observables[0].formula = "observableParameter1_obsA * S1".into(); // a placeholder no measurement fills
         assert!(Problem::new(def).err().unwrap().contains("has 1 placeholder"));

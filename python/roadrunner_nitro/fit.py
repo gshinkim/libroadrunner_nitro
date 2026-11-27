@@ -118,10 +118,13 @@ class Problem:
         self._p.add_observable(id, formula, str(noise_formula), transformation, noise)
         return self
 
-    def add_measurements(self, condition, observable, times, values):
+    def add_measurements(self, condition, observable, times, values, preequilibration=None):
+        """Measurements of an observable in a condition. A time of inf is a measurement at steady state (reached from
+        the last finite time). preequilibration: a condition whose steady state the simulation starts from (states
+        the simulation condition sets excepted)."""
         t = np.asarray(times, dtype=float).ravel()
         v = np.asarray(values, dtype=float).ravel()
-        self._p.add_measurements(condition, observable, t.tolist(), v.tolist())
+        self._p.add_measurements(condition, observable, t.tolist(), v.tolist(), preequilibration)
         return self
 
     # ------------------------------------------------------------ description
@@ -179,6 +182,9 @@ class Problem:
     def measurement_table(self, theta=None):
         """The measurements (pandas DataFrame), with the simulation at theta in a 'simulation' column if given."""
         df = _pandas().DataFrame(self._p.measurements, columns=['simulationConditionId', 'observableId', 'time', 'measurement'])
+        pre = self._p.preequilibration_conditions
+        if any(pre):
+            df.insert(0, 'preequilibrationConditionId', pre)
         if theta is not None:
             df['simulation'] = self.simulate(theta)
         return df

@@ -154,6 +154,19 @@ pub unsafe extern "C" fn fitAddMeasurements(p: FitProblemHandle, conditionId: *c
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn fitAddPreequilibratedMeasurements(p: FitProblemHandle, preequilibrationId: *const c_char, conditionId: *const c_char,
+                                                           observableId: *const c_char, n: c_int, times: *const f64, values: *const f64) -> bool {
+    run(false, || {
+        let pr = prob(p)?;
+        let (pc, c, o) = (st(preequilibrationId)?, st(conditionId)?, st(observableId)?);
+        let (t, v) = (doubles(times, n)?, doubles(values, n)?);
+        pr.changed().measurements.extend(t.into_iter().zip(v).map(|(time, value)|
+            Measurement { condition: c.clone(), preeq_condition: pc.clone(), observable: o.clone(), time, value, ..Default::default() }));
+        Ok(true)
+    })
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn fitSetTolerances(p: FitProblemHandle, rtol: f64, atol: f64) -> bool {
     run(false, || {
         let pr = prob(p)?;
