@@ -33,7 +33,7 @@ import numpy as np
 
 from . import core
 
-__all__ = ['Problem', 'FitResult', 'FisherResult']
+__all__ = ['fit_timecourse', 'TimecourseFit', 'Problem', 'FitResult', 'FisherResult']
 
 
 def _unscale(scale, x):
@@ -45,6 +45,12 @@ def _scale(scale, v):
     v = np.asarray(v, dtype=float)
     with np.errstate(divide='ignore', invalid='ignore'):
         return {'lin': v, 'log': np.log(v), 'log10': np.log10(v)}[scale]
+
+
+def _auto_scale(lower, upper):
+    """log10 for a positive range spanning a factor of 100 or more, lin otherwise."""
+    lo, hi = float(lower), float(upper)
+    return 'log10' if lo > 0 and np.isfinite(hi) and hi / lo >= 100 else 'lin'
 
 
 def _pandas():
@@ -86,10 +92,16 @@ class Problem:
 
     # ------------------------------------------------------------ building
 
-    def add_parameter(self, id, scale='lin', lower=np.nan, upper=np.nan, nominal=np.nan, estimate=True):
+    def add_parameter(self, id, scale=None, lower=np.nan, upper=np.nan, nominal=np.nan, estimate=True):
         """A parameter-table row. Bounds and nominal value are linear values. An id that is a model parameter,
         species or compartment overrides the model's value; other ids can appear in observable and noise
-        formulas and in conditions."""
+        formulas and in conditions.
+
+        scale: 'lin', 'log' or 'log10', the scale the optimizer searches on. None picks log10 for a positive range
+        spanning a factor of 100 or more (rate constants, usually), so the search covers every order of magnitude
+        evenly; lin otherwise."""
+        if scale is None:
+            scale = _auto_scale(lower, upper)
         self._p.add_parameter(id, scale, float(lower), float(upper), float(nominal), bool(estimate))
         return self
 
@@ -332,4 +344,204 @@ class FisherResult:
             lo, hi = self.lower_linear[k], self.upper_linear[k]
             tag = '' if self.identifiable[k] else '  (not identifiable)'
             lines.append(f'  {i}: [{lo:.6g}, {hi:.6g}]{tag}')
+        return '\n'.join(lines)
+
+
+# ---------------------------------------------------------------- the short form: one time course, a few parameters
+
+def _model_sbml(model):
+    """SBML text from a RoadRunner instance, SBML text, a file path, or Antimony text."""
+    if hasattr(model, 'getSBML'):
+        return model.getSBML()
+    s = os.fspath(model)
+    if not s.lstrip().startswith('<') and len(s) < 4096 and os.path.exists(s):
+        with open(s, encoding='utf-8') as f:
+            s = f.read()
+    return s if s.lstrip().startswith('<') else core.antimony_to_sbml(s)
+
+
+def _data_columns(data):
+    """(times, {column name: values}) from a dict, a pandas DataFrame, a roadrunner simulation result (NamedArray)
+    or a numpy structured array; the time column is called 'time'."""
+    if hasattr(data, 'colnames') and np.ndim(data) == 2 and len(data.colnames) == np.shape(data)[1]:
+        a = np.asarray(data, dtype=float)
+        cols = {n: a[:, i] for i, n in enumerate(data.colnames)}
+    elif hasattr(data, 'columns') and hasattr(data, 'to_numpy'):      # pandas
+        cols = {str(c): data[c].to_numpy(dtype=float) for c in data.columns}
+    elif isinstance(data, dict):
+        cols = {str(k): np.asarray(v, dtype=float).ravel() for k, v in data.items()}
+    elif getattr(getattr(data, 'dtype', None), 'names', None):
+        cols = {n: np.asarray(data[n], dtype=float) for n in data.dtype.names}
+    else:
+        raise TypeError('data: a dict {"time": [...], "S1": [...]}, a pandas DataFrame, or a simulation result')
+    tkey = next((k for k in cols if k.lower() in ('time', '[time]', 't')), None)
+    if tkey is None:
+        raise ValueError(f'data: no time column (columns: {", ".join(cols)})')
+    times = cols.pop(tkey)
+    if not cols:
+        raise ValueError('data: no measured columns besides time')
+    for k, v in cols.items():
+        if len(v) != len(times):
+            raise ValueError(f'data: column {k!r} has {len(v)} values, time has {len(times)}')
+    return times, cols
+
+
+def _symbol(column):
+    """Model symbol of a data column: '[S1]' (roadrunner's concentration selection) is S1."""
+    c = column.strip()
+    return c[1:-1] if c.startswith('[') and c.endswith(']') else c
+
+
+def fit_timecourse(model, data, params, sigma=None, n_starts=10, seed=0, level=0.95):
+    """Fit model parameters to one time course: the short form of Problem for the common case.
+
+        r = fit.fit_timecourse(model, {'time': t, 'S1': s1}, ['k1', 'k2'])
+        print(r)            # values with confidence intervals
+        r.plot()            # data and fitted curves
+
+    model:  Antimony text, SBML text, a model file, or a RoadRunner instance.
+    data:   a dict, pandas DataFrame or roadrunner simulation result with a 'time' column and one column per
+            measured quantity, named by its model symbol (a species, '[S1]' for its concentration, a parameter, an
+            assignment-rule variable). Missing values (NaN) are skipped. The simulation starts at time 0 from the
+            model's initial state.
+    params: the parameters to estimate: a list of ids, searched from 1/1000 to 1000 times their value in the
+            model (a log scale), or a dict {id: (lower, upper)} or {id: (lower, upper, initial)}. The model's
+            values are also used as the first starting point.
+    sigma:  the measurement error (standard deviation): one number, a dict per column, or None (the default) to
+            estimate one common error from the scatter of the data around the fit, as lmfit and scipy's
+            curve_fit do. The confidence intervals use it.
+    n_starts, seed: starting points of the multistart fit and the random seed choosing them.
+    level:  confidence level of the intervals.
+    """
+    from .roadrunner import RoadRunner
+    sbml = _model_sbml(model)
+    times, cols = _data_columns(data)
+    if isinstance(params, str):
+        params = [params]
+    if not isinstance(params, dict):
+        params = {k: None for k in params}
+    rr = RoadRunner(sbml)
+    p = Problem(sbml)
+    x0 = []
+    for pid, spec in params.items():
+        try:
+            v = float(rr[pid])
+        except Exception:
+            raise ValueError(f'parameter {pid!r} is not in the model') from None
+        if spec is None:
+            if not (v > 0 and np.isfinite(v)):
+                raise ValueError(f'{pid!r} is {v} in the model, so no default range can be taken from it: give one, '
+                                 f'params={{{pid!r}: (lower, upper)}}')
+            lo, hi, init = v / 1000, v * 1000, v
+        else:
+            lo, hi = float(spec[0]), float(spec[1])
+            init = float(spec[2]) if len(spec) > 2 else (v if lo <= v <= hi else np.sqrt(lo * hi) if lo > 0 else 0.5 * (lo + hi))
+        p.add_parameter(pid, None, lo, hi, init)
+        x0.append(init)
+    p.add_condition('data')
+    for name, values in cols.items():
+        sym = _symbol(name)
+        s = sigma.get(name, sigma.get(sym)) if isinstance(sigma, dict) else sigma
+        p.add_observable(name, sym, '1' if s is None else repr(float(s)))
+        ok = ~np.isnan(values)
+        p.add_measurements('data', name, times[ok], values[ok])
+    estimate = sigma is None or (isinstance(sigma, dict) and any(sigma.get(n, sigma.get(_symbol(n))) is None for n in cols))
+    if estimate and isinstance(sigma, dict):
+        raise ValueError('sigma: give every column an error, or none (to estimate one common error)')
+    start = p.to_scale(x0)
+    lower, upper = p.bounds
+    start = np.clip(start, lower, upper)
+    result = p.fit(n_starts=n_starts, seed=seed, x0=start)
+    best = result.best
+    res = p.residuals(best)
+    n, k = len(res), len(best)
+    ssr = float(np.sum(res ** 2))
+    fi = p.fisher(best, level)
+    if estimate:
+        s_hat = np.sqrt(ssr / (n - k)) if n > k else np.nan
+        # the residuals were computed with sigma = 1: scale the covariance by the estimated error
+        z = (fi.upper - fi.x) / np.where(fi.sd > 0, fi.sd, 1)
+        sd = fi.sd * s_hat
+        fi = FisherResult(ids=fi.ids, x=fi.x, sd=sd, lower=fi.x - z * sd, upper=fi.x + z * sd, identifiable=fi.identifiable,
+                          cov=fi.cov * s_hat ** 2, corr=fi.corr, level=fi.level, scales=fi.scales)
+        sig, ssr_out = float(s_hat), ssr * s_hat ** 2
+    else:
+        sig, ssr_out = sigma, None
+    values = p.to_linear(best)
+    intervals = {i: (float(lo), float(hi)) for i, lo, hi in zip(fi.ids, fi.lower_linear, fi.upper_linear)}
+    return TimecourseFit(values=values, intervals=intervals, identifiable=dict(zip(fi.ids, fi.identifiable)),
+                         sigma=sig, sigma_estimated=estimate, n_data=n, level=level, problem=p, result=result, fisher=fi,
+                         sbml=sbml, times=times, data=cols)
+
+
+@dataclass(repr=False)
+class TimecourseFit:
+    """The result of fit_timecourse.
+
+    values: {id: fitted value}; intervals: {id: (lower, upper)} at `level`; identifiable: {id: bool};
+    sigma: the measurement error used (estimated from the residuals when sigma_estimated); problem, result,
+    fisher: the full Problem, FitResult and FisherResult behind it.
+    """
+    values: dict
+    intervals: dict
+    identifiable: dict
+    sigma: object
+    sigma_estimated: bool
+    n_data: int
+    level: float
+    problem: Problem
+    result: FitResult
+    fisher: FisherResult
+    sbml: str
+    times: np.ndarray
+    data: dict
+
+    def roadrunner(self):
+        """A RoadRunner instance of the model with the fitted values set."""
+        from .roadrunner import RoadRunner
+        rr = RoadRunner(self.sbml)
+        floating = set(rr.model.getFloatingSpeciesIds())
+        for k, v in self.values.items():
+            if k in floating:
+                rr.setValue(f'init([{k}])', v)
+            else:
+                rr[k] = v
+        rr.reset()
+        return rr
+
+    def simulate(self, end=None, points=201):
+        """The fitted model simulated from 0 to `end` (default: the last data time): columns time and every
+        measured quantity."""
+        end = float(np.max(self.times)) if end is None else end
+        rr = self.roadrunner()
+        floating = set(rr.model.getFloatingSpeciesIds())
+        sels = ['time'] + [f'[{s}]' if s in floating else s for s in (_symbol(c) for c in self.data)]
+        return rr.simulate(0, end, points, sels)
+
+    def plot(self, ax=None):
+        """Data (points) and the fitted model (lines), one colour per measured quantity. Needs matplotlib."""
+        import matplotlib.pyplot as plt
+        if ax is None:
+            _, ax = plt.subplots(figsize=(6, 4))
+        sim = np.asarray(self.simulate())
+        for q, (name, vals) in enumerate(self.data.items()):
+            c = f'C{q % 10}'
+            ax.plot(self.times, vals, 'o', color=c, label=f'{name} data')
+            ax.plot(sim[:, 0], sim[:, q + 1], '-', color=c, label=f'{name} fit')
+        ax.set_xlabel('time')
+        ax.legend()
+        return ax
+
+    def __repr__(self):
+        agree = self.result.n_at_best()
+        lines = [f'Fit of {len(self.values)} parameter{"s" * (len(self.values) != 1)} to {self.n_data} data points '
+                 f'({agree} of {len(self.result.value)} starts reached the best fit)']
+        w = max(len(k) for k in self.values)
+        for k, v in self.values.items():
+            lo, hi = self.intervals[k]
+            ci = (f'{self.level:.0%} interval {lo:.4g} to {hi:.4g}' if self.identifiable[k]
+                  else 'not identifiable from these data')
+            lines.append(f'  {k:{w}s} = {v:<10.5g} ({ci})')
+        if self.sigma_estimated:
+            lines.append(f'  measurement error estimated from the scatter of the data: {self.sigma:.4g}')
         return '\n'.join(lines)

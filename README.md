@@ -119,16 +119,29 @@ The method names are libroadrunner's: `simulate`, `steadyState`, `getCC`, `getVa
 ### Fit a model to data (parameter estimation, in development)
 
 `roadrunner_nitro.fit` estimates parameters from data: exact gradients, multistart least squares, and confidence
-intervals. It reads [PEtab](https://petab.readthedocs.io) problems, or you build the problem in Python:
+intervals. For one time course it takes three lines:
 
 ```python
 from roadrunner_nitro import fit
 
+data = {'time': [0, 2, 4, 6, 8, 10, 15, 20, 25, 30],
+        'S1':   [0.0, 7.0, 14.0, 17.2, 19.7, 21.5, 22.7, 24.4, 24.4, 26.6]}
+r = fit.fit_timecourse(sbml, data, ['k1', 'k2'])    # the model above (Antimony, SBML, a file or a RoadRunner)
+print(r)                                            # k1, k2 with 95% intervals
+r.plot()                                            # the data and the fitted curve (needs matplotlib)
+```
+
+The parameters are searched from 1/1000 to 1000 times their value in the model, on a log scale; the measurement
+error is estimated from the scatter of the data unless you give it (`sigma=0.5`). `data` can also be a pandas
+table or a `simulate()` result. For several experiments, or a [PEtab](https://petab.readthedocs.io) problem, use
+`fit.Problem`:
+
+```python
 p = fit.Problem.from_petab('problem.yaml')     # or build it by hand, below
 
-p = fit.Problem(sbml)                          # the model above
-p.add_parameter('k1', scale='log10', lower=1e-3, upper=1e3, nominal=1)
-p.add_parameter('k2', scale='log10', lower=1e-3, upper=1e3, nominal=1)
+p = fit.Problem(sbml)
+p.add_parameter('k1', lower=1e-3, upper=1e3)   # a wide positive range is searched on a log scale
+p.add_parameter('k2', lower=1e-3, upper=1e3)
 p.add_condition('normal')                      # the model as it is
 p.add_condition('half', {'X0': 5})             # an experiment with X0 changed
 p.add_observable('S1_obs', 'S1', noise_formula='0.1')

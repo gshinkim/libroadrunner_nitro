@@ -200,3 +200,56 @@ def test_petab(tmp_path):
     (tmp_path / 'conditions.tsv').write_text('conditionId\tX0\nfull\t\nhalf\tnot_a_parameter\n')
     with pytest.raises(ValueError, match="'not_a_parameter' is not in the parameter table"):
         fit.Problem.from_petab(tmp_path / 'problem.yaml')
+
+
+# ---------------------------------------------------------------- the short form: fit_timecourse
+
+SIMPLE = 'J1: $X0 -> S1; k1*X0; J2: S1 -> ; k2*S1; X0 = 10; S1 = 0; k1 = 1; k2 = 1'
+T10 = np.array([0, 2, 4, 6, 8, 10, 15, 20, 25, 30.])
+Y10 = np.array([0.0, 7.0, 14.0, 17.2, 19.7, 21.5, 22.7, 24.4, 24.4, 26.6])
+
+
+def test_fit_timecourse_matches_curve_fit():
+    so = pytest.importorskip('scipy.optimize')
+    r = fit.fit_timecourse(SIMPLE, {'time': T10, 'S1': Y10}, ['k1', 'k2'])
+    f = lambda t, k1, k2: 10 * k1 / k2 * (1 - np.exp(-k2 * t))
+    popt, pcov = so.curve_fit(f, T10, Y10, p0=[1, 1])
+    k = np.array([r.values['k1'], r.values['k2']])
+    np.testing.assert_allclose(k, popt, rtol=1e-5)
+    # intervals from the error estimated from the residuals, as curve_fit's (absolute_sigma=False)
+    np.testing.assert_allclose(r.fisher.sd * k * np.log(10), np.sqrt(np.diag(pcov)), rtol=1e-4)
+    assert r.sigma_estimated and r.sigma == pytest.approx(np.sqrt(np.sum((f(T10, *popt) - Y10) ** 2) / 8), rel=1e-6)
+    assert r.problem.scales == ['log10', 'log10']
+    lo, hi = r.intervals['k1']
+    assert lo < 0.5 < hi and 'interval' in repr(r)
+    sim = np.asarray(r.simulate(end=30, points=31))
+    np.testing.assert_allclose(sim[:, 1], f(sim[:, 0], *k), rtol=1e-5, atol=1e-6)
+
+
+def test_fit_timecourse_from_a_simulation_result():
+    # data straight from roadrunner: '[S1]', '[S2]' columns, two species measured
+    model = 'J1: $X0 -> S1; k1*X0; J2: S1 -> S2; k2*S1; J3: S2 -> ; k3*S2; X0 = 10; k1 = 0.5; k2 = 0.3; k3 = 0.1'
+    r0 = rn.RoadRunner(rn.core.antimony_to_sbml(model))
+    data = r0.simulate(0, 20, 11, ['time', '[S1]', '[S2]'])
+    r = fit.fit_timecourse(model.replace('k1 = 0.5', 'k1 = 1').replace('k2 = 0.3', 'k2 = 1'), data, ['k1', 'k2'], sigma=0.1)
+    assert r.values == pytest.approx({'k1': 0.5, 'k2': 0.3}, rel=1e-5)
+    assert not r.sigma_estimated and r.sigma == 0.1
+    # bounds given; a parameter that is 0 in the model needs them
+    r = fit.fit_timecourse(model, data, {'k1': (0.01, 10), 'k3': (0.001, 1)})
+    assert r.values == pytest.approx({'k1': 0.5, 'k3': 0.1}, rel=1e-5)
+    with pytest.raises(ValueError, match='give one'):
+        fit.fit_timecourse(model.replace('k3 = 0.1', 'k3 = 0'), data, ['k3'])
+    with pytest.raises(ValueError, match='not in the model'):
+        fit.fit_timecourse(model, data, ['nope'])
+    with pytest.raises(ValueError, match='no time column'):
+        fit.fit_timecourse(model, {'S1': [1, 2]}, ['k1'])
+
+
+def test_add_parameter_picks_the_scale():
+    p = fit.Problem.from_antimony(SIMPLE)
+    p.add_parameter('k1', lower=0.001, upper=100)    # a wide positive range: log10
+    p.add_parameter('k2', lower=0.1, upper=0.5)      # narrow: lin
+    p.add_condition('c')
+    p.add_observable('o', 'S1', '1')
+    p.add_measurements('c', 'o', T10, Y10)
+    assert p.scales == ['log10', 'lin']
