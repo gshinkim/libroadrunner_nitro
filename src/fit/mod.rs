@@ -210,6 +210,54 @@ mod tests {
     }
 
     #[test]
+    fn compartment_sizes() {
+        // inflow v0 in amount/time: d[S1]/dt = v0 / C - k [S1]; S1(t) = v0/(k C) + (S1_0 - v0/(k C)) exp(-k t)
+        let ant = "model comp
+            compartment C = 1
+            species S1 in C
+            J0: -> S1; v0
+            J1: S1 -> ; k*S1*C
+            S1 = 2; v0 = 3; k = 0.5
+        end";
+        let s1 = |t: f64, c: f64, v0: f64, k: f64| v0 / (k * c) + (2.0 - v0 / (k * c)) * (-k * t).exp();
+        let def = |table_c: Option<f64>| {
+            let mut params = vec![par("v0", Scale::Log10, 0.01, 100.0, 3.0, true), par("k", Scale::Log10, 0.01, 10.0, 0.5, true),
+                                  par("C_big", Scale::Lin, 0.1, 10.0, 4.0, false)];
+            if let Some(c) = table_c { params.push(par("C", Scale::Lin, 0.1, 10.0, c, false)); }
+            let mut meas = vec![];
+            for c in ["one", "two", "four"] {
+                for &t in &TIMES[1..] { meas.push(Measurement { condition: c.into(), observable: "y".into(), time: t, value: 1.0 }); }
+            }
+            ProblemDef {
+                sbml: sbml(ant), params,
+                conditions: vec![("one".into(), vec![]), ("two".into(), vec![("C".into(), Value::Num(2.0))]),
+                                 ("four".into(), vec![("C".into(), Value::Par("C_big".into()))])],
+                observables: vec![obs("y", "S1", "0.1", Noise::Normal, Scale::Lin)],
+                measurements: meas,
+            }
+        };
+        let mut p = Problem::new(def(None)).unwrap();
+        p.rtol = 1e-11;
+        p.atol = 1e-14;
+        let (v0, k) = (2.5f64, 0.4f64);
+        let theta = [v0.log10(), k.log10()];
+        let y = p.simulate_measurements(&theta).unwrap();
+        for (q, ms) in p.measurements.iter().enumerate() {
+            let c = match ms.condition.as_str() { "one" => 1.0, "two" => 2.0, _ => 4.0 };
+            assert!((y[q] - s1(ms.time, c, v0, k)).abs() < 1e-8, "{} t {}: {} vs {}", ms.condition, ms.time, y[q], s1(ms.time, c, v0, k));
+        }
+        fd_check(&p, &theta, 1e-5);
+        // a fixed parameter-table row sets the size for every condition without its own
+        let p = Problem::new(def(Some(3.0))).unwrap();
+        let y = p.simulate_measurements(&theta).unwrap();
+        assert!((y[0] - s1(TIMES[1], 3.0, v0, k)).abs() < 1e-6, "{} vs {}", y[0], s1(TIMES[1], 3.0, v0, k));
+        // estimating a size is refused
+        let mut d = def(Some(3.0));
+        d.params.last_mut().unwrap().estimate = true;
+        assert!(Problem::new(d).err().unwrap().contains("cannot be estimated"));
+    }
+
+    #[test]
     fn refuses_unsupported() {
         let mut def = decay_problem(0.0);
         def.measurements[0].time = f64::INFINITY;

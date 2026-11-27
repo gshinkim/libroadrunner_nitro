@@ -12,12 +12,12 @@
 //! `Problem::evaluate` gives the negative log-likelihood and its gradient, and for least-squares problems (normal
 //! noise, noise fixed) the residuals and their Jacobian, all with respect to the free parameters on their scales.
 use crate::expr::{parse, parse_sym, Dag, Op, Sym, Tape, N};
-use crate::model::{Key, Model};
+use crate::model::{Key, Model, Work};
 use crate::sens::{remap, sens_model_dirs};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::f64::consts::{LN_10, PI};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 /// Parameter scale, also used for observable transformations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,6 +98,10 @@ struct Cond {
     leaf: Vec<Slot>,
     /// per state: its initial value is given (overrides an initial assignment)
     fixed_init: Vec<bool>,
+    /// model parameters whose value is given here (a compartment size): kept even if an initial assignment sets them
+    fixed_par: Vec<usize>,
+    /// the compiled model: 0 the problem's, i > 0 compartment_models[i - 1] (compartment sizes set)
+    model: usize,
     /// 0, then the distinct measurement times
     times: Vec<f64>,
     /// (time index, observable, measurement index)
@@ -111,11 +115,32 @@ struct SensModel { m: Model, keys: Vec<Key>, souts: Vec<u32> }
 #[derive(Clone, Debug, Default)]
 pub struct Eval { pub nllh: f64, pub grad: Vec<f64>, pub res: Vec<f64>, pub jac: Vec<f64> }
 
-/// Per measurement: (y, sigma, dy/dtheta, dsigma/dtheta).
-type Pred = (f64, f64, Vec<f64>, Vec<f64>);
+/// Scratch of one sensitivity direction: the sensitivity model's work (made on first use), its inputs and outputs.
+struct DirScratch { w: Option<Work>, v: Vec<f64>, out: Vec<f64>, active: bool, ok: bool }
+
+/// Scratch of one condition, reused across evaluations so the inner loop does not allocate.
+struct CondScratch {
+    w: Work,
+    regs: Vec<f64>,   // pre-tape registers
+    vals: Vec<f64>,   // [p_eff | x0]
+    dpre: Vec<f64>,   // d [p_eff | x0] / d theta, (np + nx) x nf
+    x: Vec<f64>,      // states at the output times, nt x nx
+    oregs: Vec<f64>,  // observable-tape registers
+    dleaf: Vec<(usize, usize, f64)>,
+    dextra: Vec<(usize, usize, f64)>,
+    dirs: Vec<DirScratch>,
+    /// per measurement of the condition: [y, sigma, dy/dtheta (nf), dsigma/dtheta (nf)]
+    pred: Vec<f64>,
+    err: Option<String>,
+}
+
+/// Everything one evaluation writes; evaluations take one from the problem's pool and give it back.
+struct Scratch { pv: Vec<f64>, dpv: Vec<f64>, conds: Vec<CondScratch> }
 
 pub struct Problem {
     pub model: Model,
+    /// the model compiled again with the compartment sizes some conditions set (volumes are compiled into a model)
+    compartment_models: Vec<Model>,
     pub params: Vec<ParamDef>,
     /// parameter-table rows estimated, in the order of the optimizer's vector
     pub free: Vec<usize>,
@@ -136,7 +161,14 @@ pub struct Problem {
     conds: Vec<Cond>,
     base_keys: Vec<Key>,
     dir_ks: Vec<usize>,
-    sens: OnceLock<Result<SensModel, String>>,
+    /// per compiled model (the problem's, then compartment_models)
+    sens: Vec<OnceLock<Result<SensModel, String>>>,
+    /// per parameter-table row: its index among the free parameters
+    fpos: Vec<Option<usize>>,
+    /// per measurement: (condition, place among the condition's measurements)
+    loc: Vec<(usize, usize)>,
+    state_outs: Vec<u32>,
+    pool: Mutex<Vec<Scratch>>,
 }
 
 /// Rebuilds a tape in `dag`: leaves are given for registers [states | params], `time` for the time register.
@@ -190,13 +222,21 @@ impl Problem {
         let ne = extras.len();
         let key_of = |id: &str| m.resolve(&[id.to_string()]).ok().map(|k| k[0]);
         let state_comps: HashSet<&str> = m.state_ids.iter().filter_map(|s| info.comp_of.get(s).map(|c| c.as_str())).collect();
-        // concentration per unit of a species' SBML value (1 / volume for amounts)
-        let fac = |i: usize| if info.hosu.contains(&m.state_ids[i]) { 1.0 / m.vol[i] } else { 1.0 };
+        // concentration per unit of a species' SBML value in model mc (1 / volume for amounts)
+        let fac = |mc: &Model, i: usize| if info.hosu.contains(&m.state_ids[i]) { 1.0 / mc.vol[i] } else { 1.0 };
 
         // pre-tape: leaves [model parameters | initial states (concentrations)] -> [p_eff (np) | x0 (nx)]
         let ia: HashMap<&str, &str> = info.ia.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         let mut dag = Dag::default();
         let mut memo: HashMap<String, N> = HashMap::new();
+        /// Volume of species i: its compartment's parameter (so a compartment size set by a condition applies), or the
+        /// compiled volume if the compartment is no parameter.
+        fn vol_node(id: &str, i: usize, m: &Model, info: &crate::sbml::Info, dag: &mut Dag) -> N {
+            match info.comp_of.get(id).and_then(|c| m.resolve(std::slice::from_ref(c)).ok()).map(|k| k[0]) {
+                Some(Key::Par(k)) => dag.mk(Op::Var(k as u32)),
+                _ => dag.cst(m.vol[i]),
+            }
+        }
         fn ia_node(id: &str, m: &Model, ia: &HashMap<&str, &str>, info: &crate::sbml::Info, dag: &mut Dag,
                    memo: &mut HashMap<String, N>, depth: usize) -> Result<N, String> {
             if let Some(&n) = memo.get(id) { return Ok(n); }
@@ -215,7 +255,7 @@ impl Problem {
                         Ok(x) => {
                             // the formula sees SBML values: amounts for hasOnlySubstanceUnits species
                             let x = match m.resolve(&[nm.clone()]).ok().map(|k| k[0]) {
-                                Some(Key::Spec(i)) if info.hosu.contains(&nm) => { let v = dag.cst(m.vol[i]); dag.mk(Op::Mul(x, v)) }
+                                Some(Key::Spec(i)) if info.hosu.contains(&nm) => { let v = vol_node(&nm, i, m, info, dag); dag.mk(Op::Mul(x, v)) }
                                 _ => x,
                             };
                             sub.insert(nm, x);
@@ -227,7 +267,7 @@ impl Problem {
                 let v = parse_sym(f, dag, |nm| if nm == "time" || nm == "__time__" { Some(Sym::Op(Op::Const(0f64.to_bits()))) } else { sub.get(nm).map(|&x| Sym::Node(x)) })
                     .map_err(|e| format!("initial assignment of '{id}': {e}"))?;
                 match key {
-                    Some(Key::Spec(i)) if info.hosu.contains(id) => { let c = dag.cst(m.vol[i]); dag.mk(Op::Div(v, c)) }
+                    Some(Key::Spec(i)) if info.hosu.contains(id) => { let c = vol_node(id, i, m, info, dag); dag.mk(Op::Div(v, c)) }
                     _ => v,
                 }
             } else {
@@ -314,35 +354,83 @@ impl Problem {
                 Value::Par(id) => Some(Slot::Par(*pidx.get(id.as_str()).ok_or(format!("{what}: '{id}' is not in the parameter table"))?, f)),
             })
         };
-        let mut base: Vec<Slot> = (0..np).map(|k| Slot::Const(m.pvals[k])).chain((0..nx).map(|i| Slot::Const(m.init[i]))).collect();
-        for (j, p) in def.params.iter().enumerate() {
-            match key_of(&p.id) {
-                Some(Key::Par(k)) => {
-                    if state_comps.contains(p.id.as_str()) { return Err(format!("parameter table: compartment '{}' holds species; compartment sizes cannot be set yet", p.id)); }
-                    base[k] = Slot::Par(j, 1.0);
+        // compartment sizes: known values only (a size is compiled into the model); a fixed parameter-table row
+        // sets it for every condition, a condition for itself
+        let comp_value = |v: &Value, what: &str| -> Result<Option<f64>, String> {
+            match v {
+                Value::Num(x) if x.is_nan() => Ok(None),
+                Value::Num(x) => Ok(Some(*x)),
+                Value::Par(id) => {
+                    let j = *pidx.get(id.as_str()).ok_or(format!("{what}: '{id}' is not in the parameter table"))?;
+                    if def.params[j].estimate { return Err(format!("{what}: compartment sizes holding species cannot be estimated")); }
+                    Ok(Some(def.params[j].nominal))
                 }
-                Some(Key::Spec(i)) => base[np + i] = Slot::Par(j, fac(i)),
-                None => {}
+            }
+        };
+        let mut base_comp: Vec<(String, f64)> = vec![];
+        for p in &def.params {
+            if state_comps.contains(p.id.as_str()) {
+                if p.estimate { return Err(format!("parameter table: compartment '{}' holds species; compartment sizes cannot be estimated", p.id)); }
+                base_comp.push((p.id.clone(), p.nominal));
             }
         }
+        let mut compartment_models: Vec<Model> = vec![];
+        let mut model_keys: Vec<Vec<(String, u64)>> = vec![vec![]];
         let mut conds = vec![];
         let mut cidx: HashMap<&str, usize> = HashMap::new();
         for (cid, entries) in &def.conditions {
             if cidx.insert(cid.as_str(), conds.len()).is_some() { return Err(format!("condition table: '{cid}' appears twice")); }
-            let mut leaf = base.clone();
+            // this condition's compartment sizes, and its compiled model
+            let mut comp = base_comp.clone();
+            for (target, v) in entries {
+                if !state_comps.contains(target.as_str()) { continue; }
+                let what = format!("condition '{cid}', column '{target}'");
+                if let Some(x) = comp_value(v, &what)? {
+                    if !(x > 0.0) { return Err(format!("{what}: a compartment size must be > 0")); }
+                    comp.retain(|c| &c.0 != target);
+                    comp.push((target.clone(), x));
+                }
+            }
+            comp.sort_by(|a, b| a.0.cmp(&b.0));
+            let key: Vec<(String, u64)> = comp.iter().map(|(c, x)| (c.clone(), x.to_bits())).collect();
+            let mi = match model_keys.iter().position(|k| *k == key) {
+                Some(i) => i,
+                None => {
+                    let mut sbml = def.sbml.clone();
+                    for (c, x) in &comp { sbml = crate::sbml::edit::set_compartment_size(&sbml, c, *x).map_err(|e| format!("condition '{cid}': {e}"))?; }
+                    let (mc, _) = crate::sbml::from_sbml(&sbml).map_err(|e| format!("condition '{cid}': model with its compartment sizes: {e}"))?;
+                    if mc.pnames != m.pnames || mc.state_ids != m.state_ids {
+                        return Err(format!("condition '{cid}': setting compartment sizes changes the model's structure"));
+                    }
+                    compartment_models.push(mc);
+                    model_keys.push(key);
+                    model_keys.len() - 1
+                }
+            };
+            let mc = if mi == 0 { m } else { &compartment_models[mi - 1] };
+            // defaults from that model, then the parameter table, then the condition
+            let mut leaf: Vec<Slot> = (0..np).map(|k| Slot::Const(mc.pvals[k])).chain((0..nx).map(|i| Slot::Const(mc.init[i]))).collect();
+            for (j, p) in def.params.iter().enumerate() {
+                match key_of(&p.id) {
+                    Some(Key::Par(k)) if state_comps.contains(p.id.as_str()) => leaf[k] = Slot::Const(mc.pvals[k]),
+                    Some(Key::Par(k)) => leaf[k] = Slot::Par(j, 1.0),
+                    Some(Key::Spec(i)) => leaf[np + i] = Slot::Par(j, fac(mc, i)),
+                    None => {}
+                }
+            }
             let mut fixed_init = vec![false; nx];
+            let mut fixed_par: Vec<usize> = comp.iter().filter_map(|(c, _)| match key_of(c) { Some(Key::Par(k)) => Some(k), _ => None }).collect();
+            fixed_par.sort();
             for (target, v) in entries {
                 let what = format!("condition '{cid}', column '{target}'");
                 match key_of(target) {
-                    Some(Key::Par(k)) => {
-                        if state_comps.contains(target.as_str()) { return Err(format!("{what}: compartment sizes cannot be set yet")); }
-                        if let Some(s) = slot_of(v, 1.0, &what)? { leaf[k] = s; }
-                    }
-                    Some(Key::Spec(i)) => if let Some(s) = slot_of(v, fac(i), &what)? { leaf[np + i] = s; fixed_init[i] = true; },
+                    Some(Key::Par(_)) if state_comps.contains(target.as_str()) => {} // in the compiled model
+                    Some(Key::Par(k)) => if let Some(s) = slot_of(v, 1.0, &what)? { leaf[k] = s; },
+                    Some(Key::Spec(i)) => if let Some(s) = slot_of(v, fac(mc, i), &what)? { leaf[np + i] = s; fixed_init[i] = true; },
                     None => return Err(format!("{what}: not a parameter, species or compartment of the model")),
                 }
             }
-            conds.push(Cond { id: cid.clone(), leaf, fixed_init, times: vec![0.0], meas: vec![] });
+            conds.push(Cond { id: cid.clone(), leaf, fixed_init, fixed_par, model: mi, times: vec![0.0], meas: vec![] });
         }
         for (q, ms) in def.measurements.iter().enumerate() {
             let what = format!("measurement {}", q + 1);
@@ -386,9 +474,17 @@ impl Problem {
             }
         }
         let base_keys = (0..np).map(Key::Par).chain((0..nx).map(Key::Spec)).collect();
+        let mut fpos = vec![None; def.params.len()];
+        for (f, &j) in free.iter().enumerate() { fpos[j] = Some(f); }
+        let mut loc = vec![(0, 0); def.measurements.len()];
+        for (ci, c) in conds.iter().enumerate() {
+            for (k, &(_, _, q)) in c.meas.iter().enumerate() { loc[q] = (ci, k); }
+        }
         Ok(Problem {
             params: def.params, free, observables: def.observables, measurements: def.measurements, least_squares,
-            rtol: 1e-8, atol: 1e-12, extras, pre, pre_d, obs, obs_d, conds, base_keys, dir_ks, sens: OnceLock::new(), model,
+            rtol: 1e-8, atol: 1e-12, extras, pre, pre_d, obs, obs_d, conds, base_keys, dir_ks,
+            sens: (0..=compartment_models.len()).map(|_| OnceLock::new()).collect(), compartment_models,
+            fpos, loc, state_outs: (0..nx as u32).collect(), pool: Mutex::new(vec![]), model,
         })
     }
 
@@ -401,9 +497,11 @@ impl Problem {
     /// Nominal values of the free parameters on their scales.
     pub fn nominal(&self) -> Vec<f64> { self.free.iter().map(|&j| { let p = &self.params[j]; p.scale.scale(p.nominal) }).collect() }
 
-    fn sens_model(&self) -> Result<&SensModel, String> {
-        self.sens.get_or_init(|| {
-            let m = &self.model;
+    fn model_of(&self, mi: usize) -> &Model { if mi == 0 { &self.model } else { &self.compartment_models[mi - 1] } }
+
+    fn sens_model(&self, mi: usize) -> Result<&SensModel, String> {
+        self.sens[mi].get_or_init(|| {
+            let m = self.model_of(mi);
             let a = sens_model_dirs(m, &self.dir_ks)?;
             let nx = m.nx;
             let names: Vec<String> = m.pnames.iter().cloned().chain(m.state_ids.iter().cloned())
@@ -416,173 +514,198 @@ impl Problem {
         }).as_ref().map_err(|e| e.clone())
     }
 
-    /// Predictions of one condition: per measurement of it (in order), (y, sigma, dy/dtheta, dsigma/dtheta).
-    fn condition(&self, c: &Cond, pv: &[f64], dpv: &[f64], grad: bool) -> Result<Vec<Pred>, String> {
+    fn new_scratch(&self) -> Scratch {
         let m = &self.model;
-        let (nx, np, nf, ne) = (m.nx, m.pnames.len(), self.free.len(), self.extras.len());
-        let fpos: HashMap<usize, usize> = self.free.iter().enumerate().map(|(f, &j)| (j, f)).collect();
-        // leaves and their derivatives
+        let (nx, np, nf) = (m.nx, m.pnames.len(), self.free.len());
         let nl = np + nx;
-        let mut regs = self.pre.regs();
-        let mut dleaf: Vec<(usize, usize, f64)> = vec![]; // (leaf, free index, d leaf / d theta_f)
+        let nv = nl + nx + self.dir_ks.len();
+        let conds = self.conds.iter().map(|c| {
+            let nt = c.times.len();
+            CondScratch {
+                w: self.model_of(c.model).work(), regs: self.pre.regs(), vals: vec![0.0; nl], dpre: vec![0.0; nl * nf], x: vec![0.0; nt * nx],
+                oregs: self.obs.regs(), dleaf: Vec::with_capacity(nl), dextra: Vec::with_capacity(self.extras.len()),
+                dirs: (0..nf).map(|_| DirScratch { w: None, v: vec![0.0; nv], out: vec![0.0; nt * nx], active: false, ok: true }).collect(),
+                pred: vec![0.0; c.meas.len() * (2 + 2 * nf)], err: None,
+            }
+        }).collect();
+        Scratch { pv: vec![0.0; self.params.len()], dpv: vec![0.0; self.params.len()], conds }
+    }
+
+    /// Run `f` with a scratch from the pool (a new one if none is free) and give it back afterwards. Parallel
+    /// evaluations (multistart) each hold their own, so they never wait for each other.
+    fn with_scratch<T>(&self, f: impl FnOnce(&mut Scratch) -> T) -> T {
+        let free = self.pool.lock().unwrap().pop();
+        let mut s = free.unwrap_or_else(|| self.new_scratch());
+        let r = f(&mut s);
+        self.pool.lock().unwrap().push(s);
+        r
+    }
+
+    /// One condition: fills cs.pred for its measurements, with the derivatives if `grad`.
+    fn condition(&self, c: &Cond, cs: &mut CondScratch, pv: &[f64], dpv: &[f64], grad: bool) -> Result<(), String> {
+        let m = self.model_of(c.model);
+        let (nx, np, nf, ne) = (m.nx, m.pnames.len(), self.free.len(), self.extras.len());
+        let nl = np + nx;
+        let CondScratch { w, regs, vals, dpre, x, oregs, dleaf, dextra, dirs, pred, .. } = cs;
+        // pre-tape leaves and their derivatives
+        dleaf.clear();
         for (l, s) in c.leaf.iter().enumerate() {
             regs[l] = match *s {
-                Slot::Const(x) => x,
+                Slot::Const(v) => v,
                 Slot::Par(j, f) => {
-                    if let Some(&q) = fpos.get(&j) { dleaf.push((l, q, f * dpv[j])); }
+                    if let Some(q) = self.fpos[j] { dleaf.push((l, q, f * dpv[j])); }
                     f * pv[j]
                 }
             };
         }
-        self.pre.run_all(&mut regs);
-        let mut vals: Vec<f64> = self.pre.outs[..nl].iter().map(|&r| regs[r as usize]).collect();
+        self.pre.run_all(regs);
+        for (v, &r) in vals.iter_mut().zip(&self.pre.outs[..nl]) { *v = regs[r as usize]; }
         for i in 0..nx { if c.fixed_init[i] { vals[np + i] = regs[np + i]; } }
-        // d [p_eff | x0] / d theta (nl x nf)
-        let mut dpre = vec![0.0; if grad { nl * nf } else { 0 }];
+        for &k in &c.fixed_par { vals[k] = regs[k]; }
         if grad {
-            let fixed = |row: usize| row >= np && c.fixed_init[row - np];
+            dpre.fill(0.0);
             for (q, &(row, l)) in self.pre_d.iter().enumerate() {
                 let row = row as usize;
-                if fixed(row) { continue; }
+                if (row >= np && c.fixed_init[row - np]) || (row < np && c.fixed_par.binary_search(&row).is_ok()) { continue; }
                 let d = regs[self.pre.outs[nl + q] as usize];
-                for &(ll, f, dl) in &dleaf { if ll == l as usize { dpre[row * nf + f] += d * dl; } }
+                for &(ll, f, dl) in dleaf.iter() { if ll == l as usize { dpre[row * nf + f] += d * dl; } }
             }
-            for &(l, f, dl) in &dleaf { if l >= np && c.fixed_init[l - np] { dpre[l * nf + f] += dl; } }
+            for &(l, f, dl) in dleaf.iter() { if l >= np && c.fixed_init[l - np] { dpre[l * nf + f] += dl; } }
         }
-        let fail = || format!("simulation failed in condition '{}'", c.id);
-        let nt = c.times.len();
-        let mut x = vec![0.0; nt * nx];
-        let mut w = m.work();
-        m.load(&mut w, &self.base_keys, &vals);
-        if !m.simulate(&mut w, &c.times, self.rtol, self.atol, &(0..nx as u32).collect::<Vec<_>>(), &mut x) { return Err(fail()); }
-        // sensitivities d x / d theta_f: nt x nx per free parameter (None: zero)
-        let sens: Vec<Option<Vec<f64>>> = if grad {
-            let sm = self.sens_model()?;
-            (0..nf).into_par_iter().map(|f| {
-                let s0: Vec<f64> = (0..nx).map(|i| dpre[(np + i) * nf + f]).collect();
-                let cf: Vec<f64> = self.dir_ks.iter().map(|&k| dpre[k * nf + f]).collect();
-                if s0.iter().chain(&cf).all(|&v| v == 0.0) { return Ok(None); }
-                let v: Vec<f64> = vals.iter().copied().chain(s0).chain(cf).collect();
-                let mut w = sm.m.work();
-                sm.m.load(&mut w, &sm.keys, &v);
-                let mut out = vec![0.0; nt * nx];
-                if !sm.m.simulate(&mut w, &c.times, self.rtol, self.atol, &sm.souts, &mut out) { return Err(fail()); }
-                Ok(Some(out))
-            }).collect::<Result<_, String>>()?
-        } else { vec![] };
-        // observables
-        let no = self.observables.len();
-        let mut oregs = self.obs.regs();
+        // the model, then the sensitivities (one direction per free parameter, in parallel)
+        m.load(w, &self.base_keys, vals);
+        if !m.simulate(w, &c.times, self.rtol, self.atol, &self.state_outs, x) {
+            return Err(format!("simulation failed in condition '{}'", c.id));
+        }
+        if grad {
+            let sm = self.sens_model(c.model)?;
+            let (vals, dpre) = (&*vals, &*dpre);
+            dirs.par_iter_mut().enumerate().for_each(|(f, d)| {
+                d.ok = true;
+                d.active = (0..nx).any(|i| dpre[(np + i) * nf + f] != 0.0) || self.dir_ks.iter().any(|&k| dpre[k * nf + f] != 0.0);
+                if !d.active { return; }
+                d.v[..nl].copy_from_slice(vals);
+                for i in 0..nx { d.v[nl + i] = dpre[(np + i) * nf + f]; }
+                for (q, &k) in self.dir_ks.iter().enumerate() { d.v[nl + nx + q] = dpre[k * nf + f]; }
+                let w = d.w.get_or_insert_with(|| sm.m.work());
+                sm.m.load(w, &sm.keys, &d.v);
+                d.ok = sm.m.simulate(w, &c.times, self.rtol, self.atol, &sm.souts, &mut d.out);
+            });
+            if dirs.iter().any(|d| !d.ok) { return Err(format!("sensitivity simulation failed in condition '{}'", c.id)); }
+        }
+        // observables, noise and their derivatives
         oregs[nx..nx + np].copy_from_slice(&vals[..np]);
-        let mut dextra: Vec<(usize, usize, f64)> = vec![];
+        dextra.clear();
         for (e, &j) in self.extras.iter().enumerate() {
             oregs[nx + np + e] = pv[j];
-            if let Some(&f) = fpos.get(&j) { dextra.push((e, f, dpv[j])); }
+            if let Some(f) = self.fpos[j] { dextra.push((e, f, dpv[j])); }
         }
-        let mut done_prep = false;
-        let mut out = Vec::with_capacity(c.meas.len());
-        for &(ti, o, _) in &c.meas {
+        self.obs.prep(oregs);
+        let stride = 2 + 2 * nf;
+        for (k, &(ti, o, _)) in c.meas.iter().enumerate() {
             oregs[..nx].copy_from_slice(&x[ti * nx..(ti + 1) * nx]);
             oregs[nx + np + ne] = c.times[ti];
-            if !done_prep { self.obs.prep(&mut oregs); done_prep = true; }
-            self.obs.run(&mut oregs);
-            let (y, sig) = (oregs[self.obs.outs[2 * o] as usize], oregs[self.obs.outs[2 * o + 1] as usize]);
-            let (mut dy, mut ds) = (vec![0.0; if grad { nf } else { 0 }], vec![0.0; if grad { nf } else { 0 }]);
-            if grad {
-                for &(is_sig, l, r) in &self.obs_d[o] {
-                    let d = oregs[r as usize];
-                    let acc = if is_sig { &mut ds } else { &mut dy };
-                    let l = l as usize;
-                    if l < nx {
-                        for (f, s) in sens.iter().enumerate() { if let Some(s) = s { acc[f] += d * s[ti * nx + l]; } }
-                    } else if l < nx + np {
-                        let k = l - nx;
-                        for f in 0..nf { acc[f] += d * dpre[k * nf + f]; }
-                    } else {
-                        for &(e, f, de) in &dextra { if e == l - nx - np { acc[f] += d * de; } }
-                    }
+            self.obs.run(oregs);
+            let p = &mut pred[k * stride..(k + 1) * stride];
+            p[0] = oregs[self.obs.outs[2 * o] as usize];
+            p[1] = oregs[self.obs.outs[2 * o + 1] as usize];
+            if !grad { continue; }
+            let (dy, ds) = p[2..].split_at_mut(nf);
+            dy.fill(0.0);
+            ds.fill(0.0);
+            for &(is_sig, l, r) in &self.obs_d[o] {
+                let d = oregs[r as usize];
+                let acc = if is_sig { &mut ds[..] } else { &mut dy[..] };
+                let l = l as usize;
+                if l < nx {
+                    for (f, dr) in dirs.iter().enumerate() { if dr.active { acc[f] += d * dr.out[ti * nx + l]; } }
+                } else if l < nx + np {
+                    let kk = l - nx;
+                    for f in 0..nf { acc[f] += d * dpre[kk * nf + f]; }
+                } else {
+                    for &(e, f, de) in dextra.iter() { if e == l - nx - np { acc[f] += d * de; } }
                 }
             }
-            let _ = no;
-            out.push((y, sig, dy, ds));
         }
-        Ok(out)
+        Ok(())
     }
 
-    /// Parameter values (linear, every table row) and d value / d (value on scale) for theta (free, on scale).
-    fn values(&self, theta: &[f64]) -> Result<(Vec<f64>, Vec<f64>), String> {
+    /// Every condition at theta (in parallel), into s.
+    fn run(&self, theta: &[f64], grad: bool, s: &mut Scratch) -> Result<(), String> {
         if theta.len() != self.free.len() { return Err(format!("expected {} parameter values, got {}", self.free.len(), theta.len())); }
-        let mut pv: Vec<f64> = self.params.iter().map(|p| p.nominal).collect();
-        let mut dpv = vec![0.0; pv.len()];
+        let Scratch { pv, dpv, conds } = s;
+        for (j, p) in self.params.iter().enumerate() { pv[j] = p.nominal; dpv[j] = 0.0; }
         for (f, &j) in self.free.iter().enumerate() {
-            let s = self.params[j].scale;
-            pv[j] = s.unscale(theta[f]);
-            dpv[j] = s.dunscale(theta[f]);
+            let sc = self.params[j].scale;
+            pv[j] = sc.unscale(theta[f]);
+            dpv[j] = sc.dunscale(theta[f]);
         }
-        Ok((pv, dpv))
-    }
-
-    /// Model predictions (y, sigma) and their derivatives for every measurement, in measurement order.
-    fn predict(&self, theta: &[f64], grad: bool) -> Result<Vec<Pred>, String> {
-        let (pv, dpv) = self.values(theta)?;
-        let per: Vec<Vec<Pred>> = self.conds.par_iter().map(|c| self.condition(c, &pv, &dpv, grad)).collect::<Result<_, _>>()?;
-        let mut all: Vec<Option<Pred>> = vec![None; self.measurements.len()];
-        for (c, ps) in self.conds.iter().zip(per) {
-            for (&(_, _, q), p) in c.meas.iter().zip(ps) { all[q] = Some(p); }
-        }
-        Ok(all.into_iter().map(|p| p.expect("every measurement belongs to a condition")).collect())
+        let (pv, dpv) = (&*pv, &*dpv);
+        conds.par_iter_mut().zip(self.conds.par_iter()).for_each(|(cs, c)| { cs.err = self.condition(c, cs, pv, dpv, grad).err(); });
+        for cs in conds.iter_mut() { if let Some(e) = cs.err.take() { return Err(e); } }
+        Ok(())
     }
 
     /// Negative log-likelihood at theta (free parameters on their scales), with its gradient if `grad`, and the
     /// residuals and their Jacobian if `res` (least-squares problems only). A failed simulation or an
     /// undefined value (log of a negative observable) is an error; optimizers treat it as a rejected point.
+    /// Sums run over the measurements in table order, so the result does not depend on the number of threads.
     pub fn evaluate(&self, theta: &[f64], grad: bool, res: bool) -> Result<Eval, String> {
         if res && !self.least_squares { return Err("residuals need normal noise that depends on no free parameter".into()); }
-        let preds = self.predict(theta, grad || res)?;
         let nf = self.free.len();
-        let mut e = Eval { nllh: 0.0, ..Default::default() };
-        if grad { e.grad = vec![0.0; nf]; }
-        if res { e.res = Vec::with_capacity(preds.len()); e.jac = Vec::with_capacity(preds.len() * nf); }
-        for (q, (y, sig, dy, ds)) in preds.iter().enumerate() {
-            let ms = &self.measurements[q];
-            let o = &self.observables[self.obs_index(&ms.observable)];
-            let (hy, dh) = o.transform.h(*y);
-            let (hm, _) = o.transform.h(ms.value);
-            let r = hy - hm;
-            if !r.is_finite() || !(*sig > 0.0) || !sig.is_finite() {
-                return Err(format!("measurement {}: undefined likelihood (observable {y}, sigma {sig})", q + 1));
-            }
-            let lj = o.transform.log_jac(ms.value);
-            match o.noise {
-                Noise::Normal => {
-                    e.nllh += 0.5 * (2.0 * PI * sig * sig).ln() + lj + 0.5 * (r / sig).powi(2);
-                    if grad {
-                        for f in 0..nf {
-                            e.grad[f] += ds[f] / sig + r / (sig * sig) * dh * dy[f] - r * r / (sig * sig * sig) * ds[f];
+        let stride = 2 + 2 * nf;
+        self.with_scratch(|s| {
+            self.run(theta, grad || res, s)?;
+            let nm = self.measurements.len();
+            let mut e = Eval { nllh: 0.0, ..Default::default() };
+            if grad { e.grad = vec![0.0; nf]; }
+            if res { e.res = Vec::with_capacity(nm); e.jac = Vec::with_capacity(nm * nf); }
+            for (q, ms) in self.measurements.iter().enumerate() {
+                let (ci, k) = self.loc[q];
+                let o = &self.observables[self.conds[ci].meas[k].1];
+                let p = &s.conds[ci].pred[k * stride..(k + 1) * stride];
+                let (y, sig) = (p[0], p[1]);
+                let (dy, ds) = (&p[2..2 + nf], &p[2 + nf..]);
+                let (hy, dh) = o.transform.h(y);
+                let (hm, _) = o.transform.h(ms.value);
+                let r = hy - hm;
+                if !r.is_finite() || !(sig > 0.0) || !sig.is_finite() {
+                    return Err(format!("measurement {}: undefined likelihood (observable {y}, sigma {sig})", q + 1));
+                }
+                let lj = o.transform.log_jac(ms.value);
+                match o.noise {
+                    Noise::Normal => {
+                        e.nllh += 0.5 * (2.0 * PI * sig * sig).ln() + lj + 0.5 * (r / sig).powi(2);
+                        if grad {
+                            for f in 0..nf {
+                                e.grad[f] += ds[f] / sig + r / (sig * sig) * dh * dy[f] - r * r / (sig * sig * sig) * ds[f];
+                            }
+                        }
+                    }
+                    Noise::Laplace => {
+                        e.nllh += (2.0 * sig).ln() + lj + r.abs() / sig;
+                        if grad {
+                            for f in 0..nf {
+                                e.grad[f] += ds[f] / sig + r.signum() / sig * dh * dy[f] - r.abs() / (sig * sig) * ds[f];
+                            }
                         }
                     }
                 }
-                Noise::Laplace => {
-                    e.nllh += (2.0 * sig).ln() + lj + r.abs() / sig;
-                    if grad {
-                        for f in 0..nf {
-                            e.grad[f] += ds[f] / sig + r.signum() / sig * dh * dy[f] - r.abs() / (sig * sig) * ds[f];
-                        }
-                    }
+                if res {
+                    e.res.push(r / sig);
+                    e.jac.extend((0..nf).map(|f| dh * dy[f] / sig));
                 }
             }
-            if res {
-                e.res.push(r / sig);
-                e.jac.extend((0..nf).map(|f| dh * dy[f] / sig));
-            }
-        }
-        Ok(e)
+            Ok(e)
+        })
     }
-
-    fn obs_index(&self, id: &str) -> usize { self.observables.iter().position(|o| o.id == id).unwrap() }
 
     /// Simulated observables (y) of every measurement at theta, in measurement order.
     pub fn simulate_measurements(&self, theta: &[f64]) -> Result<Vec<f64>, String> {
-        Ok(self.predict(theta, false)?.into_iter().map(|p| p.0).collect())
+        let stride = 2 + 2 * self.free.len();
+        self.with_scratch(|s| {
+            self.run(theta, false, s)?;
+            Ok(self.loc.iter().map(|&(ci, k)| s.conds[ci].pred[k * stride]).collect())
+        })
     }
 }

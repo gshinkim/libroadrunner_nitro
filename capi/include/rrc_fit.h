@@ -14,7 +14,8 @@
  *  - The objective is the negative log-likelihood of the data (PEtab's convention, including the constant terms).
  *
  * Stage 1 covers: PEtab v1 core tables or a problem built here; normal and Laplace noise; lin/log/log10
- * observable transformations and parameter scales; condition overrides of parameters and initial values;
+ * observable transformations and parameter scales; condition overrides of parameters, initial values and
+ * compartment sizes (sizes are fixed values, not estimated);
  * objective, exact gradient, residuals and residual Jacobian; trust-region reflective least squares with
  * Latin hypercube multistart; Fisher-information intervals. Later-stage features (placeholders,
  * pre-equilibration, priors, events) are refused with an error, never ignored.
@@ -59,8 +60,8 @@ C_DECL_SPEC FitProblemHandle rrcCallConv fitCreateProblemFromSBML(const char* sb
 C_DECL_SPEC bool rrcCallConv fitAddParameter(FitProblemHandle p, const char* id, const char* scale,
                                              double lowerBound, double upperBound, double nominalValue, bool estimate);
 
-/** Add an experimental condition: n (target, value) pairs. A target is a model parameter or a species (its
- *  initial value, in the species' units). A value is a number, a parameter-table id, or "" / "nan" (keep the
+/** Add an experimental condition: n (target, value) pairs. A target is a model parameter, a species (its
+ *  initial value, in the species' units) or a compartment (its size: a number or a fixed parameter). A value is a number, a parameter-table id, or "" / "nan" (keep the
  *  model's value). n may be 0. */
 C_DECL_SPEC bool rrcCallConv fitAddCondition(FitProblemHandle p, const char* id, int n, const char** targets, const char** values);
 

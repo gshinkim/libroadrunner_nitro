@@ -530,6 +530,18 @@ pub fn add_parameter(sbml: &str, id: &str, value: f64) -> R {
 pub fn remove_parameter(sbml: &str, id: &str) -> R { edit(sbml, |m, l, _| remove_parameter_in(m, l, id)) }
 
 /// addCompartment (constant="false", as upstream)
+/// Set a compartment's size; an initial assignment of it is dropped (the new size replaces it). A compartment
+/// set by a rule cannot be given a size.
+pub fn set_compartment_size(sbml: &str, id: &str, size: f64) -> R {
+    edit(sbml, |m, _, _| {
+        if m.rules.iter().any(|r| r.variable() == Some(id)) { return Err(format!("compartment '{id}' is set by a rule")); }
+        let c = m.compartments.iter_mut().find(|c| c.id == id).ok_or(format!("no compartment '{id}'"))?;
+        c.size = Some(size);
+        m.initial_assignments.retain(|a| a.symbol != id);
+        Ok(())
+    })
+}
+
 pub fn add_compartment(sbml: &str, id: &str, size: f64) -> R {
     edit(sbml, |m, _, _| {
         check_id(m, "addCompartment", id)?;

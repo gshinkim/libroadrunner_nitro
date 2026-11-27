@@ -23,7 +23,7 @@ log10). Objective values are negative log-likelihoods (PEtab's convention, const
 simulation raises RuntimeError; bad input raises ValueError.
 
 Stage 1 covers normal and Laplace noise, lin/log/log10 observable transformations and parameter scales, and
-condition overrides of parameters and initial values. Placeholders, pre-equilibration, priors and events are
+condition overrides of parameters, initial values and compartment sizes (fixed values; sizes are not estimated). Placeholders, pre-equilibration, priors and events are
 refused with an error until their stages.
 """
 from dataclasses import dataclass, field
@@ -94,8 +94,8 @@ class Problem:
         return self
 
     def add_condition(self, id, overrides=None):
-        """An experimental condition: {target: value} with targets model parameters or species (initial values,
-        in the species' units) and values numbers, parameter-table ids, or None (the model's value)."""
+        """An experimental condition: {target: value} with targets model parameters, species (initial values,
+        in the species' units) or compartments (sizes) and values numbers, parameter-table ids, or None (the model's value)."""
         items = list((overrides or {}).items())
         self._p.add_condition(id, [(str(k), None if v is None else (v if isinstance(v, str) else float(v))) for k, v in items])
         return self
