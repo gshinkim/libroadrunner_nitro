@@ -8,7 +8,7 @@ values but not exactly on them: k1 = 0.47, k2 = 0.19.)
 """
 from roadrunner_nitro import fit
 
-# 1. The model, written in Antimony. The values of k1 and k2 here are only starting guesses.
+# 1. The model, written in Antimony. The values given to k1 and k2 here are not used: they are what we estimate.
 p = fit.Problem.from_antimony("""
     J1: $X0 -> S1; k1*X0
     J2: S1 -> ;    k2*S1
