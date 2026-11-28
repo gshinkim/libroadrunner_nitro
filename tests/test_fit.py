@@ -262,6 +262,11 @@ def test_fit_timecourse_matches_curve_fit():
     assert lo < 0.5 < hi and 'interval' in repr(r)
     sim = np.asarray(r.simulate(end=30, points=31))
     np.testing.assert_allclose(sim[:, 1], f(sim[:, 0], *k), rtol=1e-5, atol=1e-6)
+    # a global method first, then its 3 best points refined: the same fit
+    for m in ['pso', 'de', 'shade']:
+        rg = fit.fit_timecourse(SIMPLE, {'time': T10, 'S1': Y10}, ['k1', 'k2'], n_starts=3, global_method=m)
+        np.testing.assert_allclose([rg.values['k1'], rg.values['k2']], popt, rtol=1e-5)
+        assert rg.result.global_stage['method'] == m and len(rg.result.value) <= 3
 
 
 def test_fit_timecourse_from_a_simulation_result():

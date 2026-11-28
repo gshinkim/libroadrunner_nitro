@@ -410,7 +410,7 @@ def _symbol(column):
     return c[1:-1] if c.startswith('[') and c.endswith(']') else c
 
 
-def fit_timecourse(model, data, params, sigma=None, n_starts=10, seed=0, level=0.95):
+def fit_timecourse(model, data, params, sigma=None, n_starts=10, seed=0, level=0.95, global_method=None):
     """Fit model parameters to one time course: the short form of Problem for the common case.
 
         r = fit.fit_timecourse(model, {'time': t, 'S1': s1}, ['k1', 'k2'])
@@ -428,8 +428,11 @@ def fit_timecourse(model, data, params, sigma=None, n_starts=10, seed=0, level=0
     sigma:  the measurement error (standard deviation): one number, a dict per column, or None (the default) to
             estimate one common error from the scatter of the data around the fit, as lmfit and scipy's
             curve_fit do. The confidence intervals use it.
-    n_starts, seed: starting points of the multistart fit and the random seed choosing them.
+    n_starts, seed: starting points of the multistart fit and the random seed choosing them; with a global method,
+            the number of its best points refined by the local fit.
     level:  confidence level of the intervals.
+    global_method: None (multistart), or 'pso' (particle swarm), 'de' (differential evolution) or 'shade'
+            (adaptive differential evolution) to search the whole range first, then refine its best points.
     """
     from .roadrunner import RoadRunner
     sbml = _model_sbml(model)
@@ -469,7 +472,7 @@ def fit_timecourse(model, data, params, sigma=None, n_starts=10, seed=0, level=0
     start = p.to_scale(x0)
     lower, upper = p.bounds
     start = np.clip(start, lower, upper)
-    result = p.fit(n_starts=n_starts, seed=seed, x0=start)
+    result = p.fit(n_starts=n_starts, seed=seed, x0=start, global_method=global_method)
     best = result.best
     res = p.residuals(best)
     n, k = len(res), len(best)
