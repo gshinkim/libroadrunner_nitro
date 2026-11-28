@@ -1,0 +1,67 @@
+% roadrunner_nitro user manual.
+% Build: latexmk -pdf manual.tex   (from this folder; needs a TeX distribution such as MiKTeX or TeX Live)
+\documentclass[11pt,a4paper]{report}
+
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{underscore}   % a \_ in a long code name may break the line
+\usepackage[hidelinks]{hyperref}
+\emergencystretch=3em
+
+\definecolor{codebg}{rgb}{0.96,0.96,0.96}
+\definecolor{codecomment}{rgb}{0.35,0.45,0.35}
+\definecolor{codekw}{rgb}{0.10,0.20,0.55}
+\definecolor{codestr}{rgb}{0.55,0.15,0.10}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecomment}\itshape,
+  stringstyle=\color{codestr},
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{codebg},
+  xleftmargin=0.5em,
+  xrightmargin=0.5em,
+  aboveskip=0.8em,
+  belowskip=0.8em,
+}
+\lstdefinestyle{out}{backgroundcolor=\color{white}, frame=leftline, rulecolor=\color{gray}, keywordstyle={}, stringstyle={}, commentstyle={}}
+
+% table columns: ragged right (code names do not stretch the spacing)
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+% inline code
+\newcommand{\code}[1]{\texttt{#1}}
+
+\title{\textbf{roadrunner\_nitro}\\[0.5em]\Large User manual\\[0.3em]\normalsize Simulation, steady states, sensitivity analysis and parameter estimation for SBML models}
+\author{The roadrunner\_nitro developers}
+\date{Draft, \today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+\include{chapters/introduction}
+\include{chapters/installation}
+\include{chapters/simulation}
+\include{chapters/fitting}
+\include{chapters/capi}
+\include{chapters/differences}
+
+\appendix
+\include{chapters/troubleshooting}
+
+\end{document}

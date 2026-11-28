@@ -1,0 +1,282 @@
+\chapter{Fitting models to data}
+\label{ch:fitting}
+
+The module \code{roadrunner\_nitro.fit} estimates model parameters from measured data. It has two levels:
+
+\begin{itemize}
+  \item \code{fit.fit\_timecourse(model, data, params)}: one time course, in one line, with confidence intervals
+        and a plot (section~\ref{sec:timecourse}).
+  \item \code{fit.Problem}: several experiments, observables that are formulas of the model, measurement error
+        models, pre-equilibration, PEtab files and every option of the optimizers (section~\ref{sec:problem}).
+\end{itemize}
+
+The short form builds a \code{Problem} internally, so you can move from one to the other without starting over.
+
+\section{The short form: one time course}
+\label{sec:timecourse}
+
+We measured \code{S1} at ten times and want the two rate constants:
+
+\begin{lstlisting}[language=Python]
+from roadrunner_nitro import fit
+
+model = """
+    J1: $X0 -> S1; k1*X0
+    J2: S1 -> ;    k2*S1
+    X0 = 10; S1 = 0; k1 = 1; k2 = 1
+"""
+data = {'time': [0, 2, 4, 6, 8, 10, 15, 20, 25, 30],
+        'S1':   [0.0, 7.0, 14.0, 17.2, 19.7, 21.5, 22.7, 24.4, 24.4, 26.6]}
+
+result = fit.fit_timecourse(model, data, ['k1', 'k2'])
+print(result)
+result.plot()                  # the data and the fitted curve (needs matplotlib)
+\end{lstlisting}
+\begin{lstlisting}[style=out]
+Fit of 2 parameters to 10 data points (9 of 10 starts reached the best fit)
+  k1 = 0.47004    (95% interval 0.4275 to 0.5168)
+  k2 = 0.18585    (95% interval 0.1652 to 0.2091)
+  measurement error estimated from the scatter of the data: 0.7813
+\end{lstlisting}
+
+\paragraph{The model} can be Antimony text, SBML text, the name of a model file, or a \code{RoadRunner} object.
+
+\paragraph{The data} is a dictionary, a pandas table or a \code{simulate()} result, with a \code{'time'} column
+and one column per measured quantity, named by its model symbol: a species, \code{'[S1]'} for its
+concentration, a parameter, or an assignment-rule variable. Missing values (NaN) are skipped. The simulation
+starts at time 0 from the model's initial state.
+
+\paragraph{The parameters} are a list of ids, each searched from 1/1000 to 1000 times its value in the model on
+a logarithmic scale, or a dictionary giving ranges, \code{\{'k1': (0.01, 10)\}}, optionally with a starting
+value, \code{\{'k1': (0.01, 10, 0.5)\}}. The model's values are the first starting point.
+
+\paragraph{The measurement error} is estimated from the scatter of the data around the fit, as
+\code{scipy.optimize.curve\_fit} and lmfit do, unless you give it: \code{sigma=0.5} for every column, or a
+dictionary per column. The confidence intervals use it.
+
+\paragraph{Options.} \code{n\_starts} (default 10) is the number of starting points of the multistart fit, and
+\code{seed} the random seed that places them. \code{global\_method} searches the whole range first with
+\code{'pso'}, \code{'de'} or \code{'shade'} (section~\ref{sec:optimizers}); \code{n\_starts} is then the number of
+the search's best points refined. \code{level} (default 0.95) is the confidence level of the intervals.
+
+\paragraph{The result} has \code{values} and \code{intervals} (dictionaries by id), \code{identifiable},
+\code{sigma}, \code{simulate()} and \code{plot()}, and the full \code{problem}, \code{result} and \code{fisher}
+objects behind them.
+
+\section{Fitting problems}
+\label{sec:problem}
+
+A fitting problem has five parts, the same as a PEtab problem:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+Part & What it says \\
+\midrule
+Model & the SBML model \\
+Parameters & which parameters are estimated, their bounds and scales; fixed values for the others \\
+Conditions & the experiments: which parameters or initial values each one changes \\
+Observables & what was measured, as a formula of the model, and its measurement error \\
+Measurements & the data: condition, observable, time, value \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Building a problem}
+
+\begin{lstlisting}[language=Python]
+p = fit.Problem(sbml)            # or fit.Problem.from_antimony(text), .from_roadrunner(r)
+
+p.add_parameter('k1', lower=1e-3, upper=1e3)   # estimated, within the bounds
+p.add_parameter('k2', lower=1e-3, upper=1e3)
+
+p.add_condition('normal')                      # the model as it is
+p.add_condition('half', {'X0': 5})             # an experiment with X0 = 5
+
+p.add_observable('S1_obs', 'S1', noise_formula='0.8')
+p.add_measurements('normal', 'S1_obs', times, values)
+p.add_measurements('half', 'S1_obs', times, values_half)
+print(p)
+\end{lstlisting}
+\begin{lstlisting}[style=out]
+<fit.Problem: 2 free parameters, 20 measurements, 2 conditions, 1 observables>
+\end{lstlisting}
+
+\paragraph{Parameters.} \code{add\_parameter(id, scale, lower, upper, nominal, estimate)}. The
+\code{scale} is the one the optimizer works on: \code{'lin'}, \code{'log'} or \code{'log10'}. Left out, a
+positive range spanning a factor of 100 or more is searched on a log10 scale, otherwise linearly; rate constants
+are almost always best searched on a log scale. A parameter with \code{estimate=False} is fixed at its
+\code{nominal} value. An id that is not in the model is an extra parameter that observables can use, such as a
+scale factor or an offset.
+
+\paragraph{Conditions.} \code{add\_condition(id, overrides)} gives the values an experiment changes: parameters,
+initial values of species (concentrations), or compartment sizes. A value can be a number or the id of a
+parameter in the parameter table, so an initial value can itself be estimated.
+
+\paragraph{Observables.} \code{add\_observable(id, formula, noise\_formula, transformation='lin',
+noise='normal')}. The formula uses model symbols, parameter ids and \code{time}, so observables such as
+\code{'scale * (S1 + S2)'} are written directly. The noise formula is the standard deviation of the measurement
+error; it can depend on parameters (an estimated error) or on the model state (a relative error such as
+\code{'0.1 * S1'}). \code{transformation} is \code{'lin'}, \code{'log'} or \code{'log10'} (the data are
+compared on that scale, so log-normal errors are \code{'log'} with normal noise), and \code{noise} is
+\code{'normal'} or \code{'laplace'}.
+
+\paragraph{Measurements.} \code{add\_measurements(condition, observable, times, values)}. A time of
+\code{numpy.inf} is a measurement at steady state.
+
+\subsection{Pre-equilibration and steady states}
+
+Many experiments start from a system at rest: cells are kept unstimulated until they settle, then treated. A
+\emph{pre-equilibration condition} says so:
+
+\begin{lstlisting}[language=Python]
+p.add_condition('unstimulated', {'ligand': 0})
+p.add_condition('stimulated', {'ligand': 10})
+p.add_measurements('stimulated', 'pERK', times, values,
+                   preequilibration='unstimulated')
+\end{lstlisting}
+
+The model is brought to its steady state with the values of \code{'unstimulated'}, and the simulation of
+\code{'stimulated'} starts from that state. States that \code{'stimulated'} itself sets keep the values it sets.
+The steady state is searched from the model's initial state at every evaluation, so the result never depends on
+earlier evaluations.
+
+A measurement at time \code{inf} is taken at the steady state reached from the last finite measurement time. Both
+work with conservation laws: a conserved total keeps the value it has where the steady-state search starts, so
+the steady state depends on the initial state as it should, and the gradient accounts for it.
+
+\subsection{PEtab problems}
+
+PEtab is a standard file format for fitting problems (\url{https://petab.readthedocs.io}). A PEtab version 1
+problem is read from its YAML file:
+
+\begin{lstlisting}[language=Python]
+p = fit.Problem.from_petab('problem.yaml')
+\end{lstlisting}
+
+Supported: the parameter, condition, observable and measurement tables; parameter scales and observable
+transformations; normal and Laplace noise; observable and noise parameter placeholders
+(\code{observableParameters}, \code{noiseParameters}); pre-equilibration; steady-state measurements; condition
+values for parameters, initial values and compartment sizes. Features that are not supported yet (priors, models
+with events) are refused with an error naming the table, row and column, never silently ignored.
+
+\section{The objective and its gradient}
+
+The objective is the negative log-likelihood of the data, as in PEtab, including its constant terms. For a
+measurement $m$ with simulated observable $y$, transformation $h$ and standard deviation $\sigma$, normal noise
+contributes
+\[
+  \tfrac12 \log\left(2\pi\sigma^2\right) + \tfrac12\left(\frac{h(y) - h(m)}{\sigma}\right)^2
+\]
+and Laplace noise $\log(2\sigma) + |h(y) - h(m)|/\sigma$. When the noise is normal and depends on no estimated
+parameter and no state, the problem is a least-squares problem (\code{p.least\_squares}), and the residuals
+$(h(y)-h(m))/\sigma$ and their Jacobian are available too.
+
+Gradients are exact: the sensitivities of the model to every estimated parameter are integrated with the model,
+sharing its steps, rather than approximated by finite differences. They include the effect of parameters on
+initial values (through initial assignments), on switch times in the model, and on steady states.
+
+\begin{lstlisting}[language=Python]
+theta = p.nominal                  # parameters on their scales (here log10)
+p.objective(theta)
+f, g = p.gradient(theta)           # objective and its gradient
+r, J = p.residual_jacobian(theta)  # least-squares problems only
+p.simulate(theta)                  # the simulated observable of every measurement
+p.to_linear(theta)                 # {'k1': ..., 'k2': ...} on the linear scale
+\end{lstlisting}
+
+The integrator tolerances of every simulation are \code{p.rtol} and \code{p.atol} (default $10^{-8}$ and
+$10^{-12}$).
+
+\section{Optimizers}
+\label{sec:optimizers}
+
+\code{p.fit()} minimizes the objective within the bounds. It has two ways to search.
+
+\paragraph{Multistart (the default).} \code{n\_starts} starting points are spread over the box of the bounds by
+a Latin hypercube sample, and a local optimizer runs from each, in parallel. The local optimizer is chosen
+automatically: trust-region reflective least squares for least-squares problems, using the residuals and their
+exact Jacobian, and L-BFGS-B for other problems, using the objective and its exact gradient.
+
+\begin{lstlisting}[language=Python]
+r = p.fit(n_starts=20)
+print(r)
+\end{lstlisting}
+\begin{lstlisting}[style=out]
+<fit.FitResult: best objective 18.68537727, 18 of 20 starts within 1e-3 of it, 20 converged>
+  k1 = 0.47004482
+  k2 = 0.18585473
+\end{lstlisting}
+
+That most starts reach the same best value is the usual sign that it is the global optimum.
+
+\paragraph{A global search, then local refinement.} With \code{global\_method}, a population-based method first
+searches the whole box using the objective only, and its \code{n\_starts} best distinct points are then refined
+by the local optimizer:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+\code{global\_method} & Method \\
+\midrule
+\code{'pso'} & particle swarm optimization, SPSO-2011 (Clerc 2011; Zambrano-Bigiarini, Clerc and Rojas 2013):
+  40 particles, adaptive random topology \\
+\code{'de'} & differential evolution, DE/rand/1/bin (Storn and Price 1997): $F = 0.5$, $CR = 0.9$, population
+  10 per parameter between 20 and 200 \\
+\code{'shade'} & SHADE (Tanabe and Fukunaga 2013), differential evolution that adapts its own $F$ and $CR$:
+  population 100 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{lstlisting}[language=Python]
+r = p.fit(global_method='de', n_starts=3)          # refine the 3 best points found
+r = p.fit(global_method='pso', max_evals=20000)    # a larger search budget
+r = p.fit(global_method='shade', polish=False)     # the search's points, unrefined
+r.global_stage    # method, best, nfev, generations, message of the search
+\end{lstlisting}
+
+The search stops after \code{max\_evals} objective evaluations (default 1000 per parameter, at least 10\,000),
+when the values of its members agree closely, or when it stops improving. \code{population} changes the number
+of members. No method is best on every problem; model fitting rewards trying more than one.
+
+\paragraph{Common options.} \code{seed} chooses every random number: the same seed gives the same result, to the
+last bit, whatever the number of threads. \code{threads} limits the cores used (default: all). \code{x0} adds a
+starting point of your own. \code{callback(finished, total, best)} is called after each start (during a global
+search, after each generation with the number of evaluations); returning \code{True} cancels the fit, and starts
+already running keep their best point so far. \code{ftol}, \code{xtol}, \code{gtol} and \code{max\_nfev} set the
+local optimizer's stopping rules.
+
+\subsection{Results}
+
+\code{fit} returns a \code{FitResult} with every start, best first: \code{best} (the parameters on their scales),
+\code{best\_value}, \code{best\_linear} (a dictionary of linear values), \code{x}, \code{x0} and \code{value} for
+every start, \code{converged}, \code{message}, evaluation counts, and \code{n\_at\_best()}, the number of starts
+that reached the best value. \code{r.to\_dataframe()} gives a pandas table with one row per start, and
+\code{r.waterfall()} the sorted values for a waterfall plot.
+
+\section{Confidence intervals}
+
+\code{p.fisher(theta, level=0.95)} gives Wald intervals from the Fisher information, the Gauss-Newton
+approximation $J^\mathsf{T} J$ of the Hessian, at \code{theta}:
+
+\begin{lstlisting}[language=Python]
+print(p.fisher(r.best))
+\end{lstlisting}
+\begin{lstlisting}[style=out]
+<fit.FisherResult: 95% intervals>
+  k1: [0.430942, 0.512696]
+  k2: [0.166829, 0.207051]
+\end{lstlisting}
+
+The intervals are symmetric on the parameter's scale, so on a log scale they are asymmetric on the linear scale,
+as they should be for rate constants. A parameter along a direction in which the data give no information is
+reported as not identifiable, with an infinite interval. The result also holds the covariance and correlation
+matrices; \code{to\_dataframe()} gives a table.
+
+\section{Performance}
+
+Every part of a fit runs inside the compiled engine: simulations, sensitivities, the objective and the
+optimizers. Conditions, starts and population members are spread over all cores by one work-stealing thread
+pool. A problem needing more than 8\,GB of working memory for its sensitivities is refused when it is built,
+with the size it would need; such problems need adjoint sensitivities, which come later.

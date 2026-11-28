@@ -1,0 +1,21 @@
+\chapter{Troubleshooting}
+
+\begin{description}[style=nextline]
+  \item[\code{cargo: command not found}] Rust is not installed, or the terminal was opened before it was
+        installed. Install it (chapter~\ref{ch:installation}) and open a new terminal.
+  \item[\code{pip install .} fails] Read the last lines of the error. Usually Rust is missing or Python is
+        older than 3.10.
+  \item[\code{No module named roadrunner\_nitro}] The virtual environment is not active. Run
+        \code{source .venv/bin/activate} (Windows: \code{.venv\textbackslash Scripts\textbackslash activate}).
+  \item[A C program says \code{Library not loaded} or \code{cannot open shared object file}] It cannot find the
+        library file. Compile with the \code{-Wl,-rpath,...} flag of chapter~\ref{ch:capi}, or copy the library
+        next to the program.
+  \item[A fit reports ``simulation failed''] Some parameter values in the search box make the model impossible
+        to integrate (for example, a rate that overflows). The optimizers treat such points as rejected and
+        continue; if every start fails, narrow the bounds or check the model at its nominal values with
+        \code{p.objective(p.nominal)}.
+  \item[A PEtab problem is refused] The error names the table, row and column of the feature that is not
+        supported yet. Nothing is silently ignored.
+  \item[The confidence interval of a parameter is infinite] The data contain no information about that
+        parameter (or about a combination of parameters it belongs to): it is not identifiable from these data.
+\end{description}

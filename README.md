@@ -112,9 +112,10 @@ r.reset()                            # put S1 back to its starting amount (k1 st
 print(r.simulate(0, 10, 6))
 ```
 
-The method names are libroadrunner's: `simulate`, `steadyState`, `getCC`, `getValue`, `setValue`,
-`getFloatingSpeciesIds`, `getReactionRates`, `reset`, and so on. One difference: functions that return a matrix
-(for example the Jacobian or the stoichiometry matrix) give back three things, `(array, row names, column names)`.
+The method names are libroadrunner's: `simulate`, `steadyState`, `getCC`, `getValue`, `setValue`, `reset`, and
+so on, with the model's own lists on `r.model` (`r.model.getFloatingSpeciesIds()`, `r.model.getReactionRates()`).
+Matrices (the Jacobian, the stoichiometry matrix, control coefficients) come back as named arrays with
+`rownames` and `colnames`, as in libroadrunner.
 
 ### Fit a model to data (parameter estimation, in development)
 

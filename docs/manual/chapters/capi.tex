@@ -1,0 +1,137 @@
+\chapter{The C library}
+\label{ch:capi}
+
+Many programs use libroadrunner through its C library: C and C++ programs, MATLAB, Julia, R, C\#, Delphi and
+others. \code{libroadrunner\_nitro\_c\_api} is a drop-in replacement. It has all 350 functions of libroadrunner's
+C API (\code{rrc\_api.h}, \code{rrc\_types.h}, \code{rrc\_utilities.h}) with the same names, arguments and memory
+rules, and it needs neither Python, libroadrunner nor libsbml. Parameter estimation is in a header of its own,
+\code{rrc\_fit.h}.
+
+\section{Simulation}
+
+\begin{lstlisting}[language=C]
+#include <stdio.h>
+#include "rrc_api.h"
+
+int main(void) {
+    RRHandle rr = createRRInstance();
+    if (!loadSBMLFromFile(rr, "model.xml")) {    /* or loadSBML */
+        printf("error: %s\n", getLastError());
+        return 1;
+    }
+    RRCDataPtr result = simulateEx(rr, 0, 10, 100);  /* 0 to 10, 100 points */
+    double value;
+    getRRCDataElement(result, 99, 1, &value);    /* last row; column 0 is time */
+    printf("%g\n", value);
+    freeRRCData(result);                         /* free what it returns */
+    freeRRInstance(rr);
+    return 0;
+}
+\end{lstlisting}
+
+Compile and link against the library (macOS and Linux):
+
+\begin{lstlisting}[language=bash]
+cc -I capi/include capi/examples/simulate.c -o simulate \
+   -L target/release -lroadrunner_nitro_c_api -Wl,-rpath,$PWD/target/release
+\end{lstlisting}
+
+On Windows, link the import library in \code{target/release}, \code{roadrunner\_nitro\_c\_api.dll.lib}, and keep
+the DLL next to the program or on the \code{PATH}. The complete example, \code{capi/examples/simulate.c}, also finds the
+steady state and a control coefficient.
+
+\subsection{Other languages}
+
+Load the library as you would load libroadrunner's, with the headers from \code{capi/include}. MATLAB:
+
+\begin{lstlisting}
+loadlibrary('libroadrunner_nitro_c_api', 'rrc_api.h', 'addheader', 'rrc_types.h')
+h = calllib('libroadrunner_nitro_c_api', 'createRRInstance')
+\end{lstlisting}
+
+Julia:
+
+\begin{lstlisting}
+h = ccall((:createRRInstance, "libroadrunner_nitro_c_api"), Ptr{Cvoid}, ())
+\end{lstlisting}
+
+C\#:
+
+\begin{lstlisting}
+[DllImport("roadrunner_nitro_c_api")] static extern IntPtr createRRInstance();
+\end{lstlisting}
+
+Python can also call the library without the package, through \code{ctypes.CDLL}, declaring the argument and
+return types of each function.
+
+\subsection{Replacing libroadrunner in an existing program}
+
+Either rebuild the program with \code{-lroadrunner\_nitro\_c\_api} instead of \code{-lroadrunner\_c\_api}, or,
+without rebuilding, give this library libroadrunner's file name and put it where the program looks for
+libroadrunner. The program then runs on this engine unchanged.
+
+\section{Parameter estimation}
+
+\code{rrc\_fit.h} has the fitting of chapter~\ref{ch:fitting} as C functions, all prefixed \code{fit} so they
+never clash with libroadrunner's names. Its conventions follow \code{rrc\_api.h}:
+
+\begin{itemize}
+  \item Three opaque handles: \code{FitProblemHandle}, \code{FitOptionsHandle} and \code{FitResultHandle}, each
+        freed by its \code{fitFree*} function.
+  \item Vectors, matrices and strings returned are the caller's, freed with \code{freeVector},
+        \code{freeMatrix}, \code{freeStringArray} or \code{freeText}. Matrices are row-major.
+  \item Errors return \code{false}, \code{NULL} or $-1$; the message is in \code{getLastError()}.
+  \item Parameter vectors hold the estimated parameters on their scales, in the order of
+        \code{fitGetFreeParameterIds}.
+\end{itemize}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+Task & Functions \\
+\midrule
+Create a problem & \code{fitLoadPEtab}, \code{fitCreateProblem} (from a loaded RoadRunner),
+  \code{fitCreateProblemFromSBML} \\
+Build it & \code{fitAddParameter}, \code{fitAddCondition}, \code{fitAddObservable}, \code{fitAddMeasurements},
+  \code{fitAddPreequilibratedMeasurements}, \code{fitSetTolerances} \\
+Describe it & \code{fitGetNumFreeParameters}, \code{fitGetFreeParameterIds}, \code{fitGetFreeParameterScales},
+  \code{fitGetLowerBounds}, \code{fitGetUpperBounds}, \code{fitGetNominalValues}, \code{fitIsLeastSquares},
+  \code{fitGetNumMeasurements} \\
+Evaluate & \code{fitObjective}, \code{fitGradient}, \code{fitResiduals}, \code{fitResidualJacobian},
+  \code{fitSimulateMeasurements} \\
+Optimize & \code{fitCreateOptions}, \code{fitSetOption}, \code{fitSetGlobalMethod}, \code{fitSetStartPoint},
+  \code{fitRun} \\
+Results & \code{fitGetNumStarts}, \code{fitGetBest}, \code{fitGetStarts}, \code{fitGetStartPoints},
+  \code{fitGetStatusMessage} \\
+Intervals & \code{fitFisherIntervals}, \code{fitFisherCovariance} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The core of a fit:
+
+\begin{lstlisting}[language=C]
+FitProblemHandle p = fitCreateProblem(rr);     /* rr: the model loaded */
+const char *targets[] = {"X0"}, *values[] = {"5"};
+fitAddParameter(p, "k1", "log10", 1e-3, 1e3, 1.0, true);
+fitAddParameter(p, "k2", "log10", 1e-3, 1e3, 1.0, true);
+fitAddCondition(p, "full", 0, NULL, NULL);
+fitAddCondition(p, "half", 1, targets, values);
+fitAddObservable(p, "S1_obs", "S1", "0.1", "lin", "normal");
+fitAddMeasurements(p, "full", "S1_obs", 8, times, a);
+fitAddMeasurements(p, "half", "S1_obs", 8, times, b);
+
+FitOptionsHandle o = fitCreateOptions();
+fitSetOption(o, "n_starts", 6);
+fitSetGlobalMethod(o, "de");                   /* optional: global search */
+FitResultHandle r = fitRun(p, o, NULL, NULL);  /* NULL: no progress callback */
+
+double best;
+RRVectorPtr x = fitGetBest(r, &best);
+RRDoubleMatrixPtr ci = fitFisherIntervals(p, x->Data, x->Count, 0.95);
+\end{lstlisting}
+
+The options set by \code{fitSetOption} are \code{n\_starts}, \code{seed}, \code{threads}, \code{ftol},
+\code{xtol}, \code{gtol}, \code{max\_nfev}, and for a global method \code{population}, \code{max\_evals} and
+\code{polish}. The complete program \code{capi/examples/fit.c} builds a problem, evaluates the gradient, fits,
+prints intervals, and exits with an error if it does not recover the parameters the data were made from.

@@ -1,0 +1,66 @@
+\chapter{Installation}
+\label{ch:installation}
+
+\section{From PyPI}
+
+With the 1.0.0 release, the Python package installs ready-built, with no compiler needed:
+
+\begin{lstlisting}[language=bash]
+pip install roadrunner-nitro
+\end{lstlisting}
+
+It is imported as \code{roadrunner\_nitro}. Until that release, build it from source as below. The C library is
+always built from source.
+
+\section{Building from source}
+
+\subsection{Tools}
+
+You need three tools. Open a terminal (macOS: the Terminal app; Windows: PowerShell) and check each:
+
+\begin{enumerate}
+  \item \textbf{git}: \code{git --version}. If it is missing: on macOS run \code{xcode-select --install}; on
+        Windows install it from \url{https://git-scm.com}.
+  \item \textbf{Python 3.10 or newer} (only for the Python package): \code{python3 --version}. If it is missing:
+        \url{https://python.org}.
+  \item \textbf{Rust}, which compiles the engine: \code{cargo --version}. If it is missing, install it from
+        \url{https://rustup.rs}. On Windows, accept the offer to install the Visual Studio C++ Build Tools.
+\end{enumerate}
+
+\subsection{Download}
+
+\begin{lstlisting}[language=bash]
+git clone https://github.com/gshinkim/libroadrunner_nitro.git
+cd libroadrunner_nitro
+\end{lstlisting}
+
+Run the commands below from inside this folder.
+
+\subsection{The Python package}
+
+Install into a fresh virtual environment, so nothing else on your computer changes. The first build takes one to
+three minutes.
+
+\begin{lstlisting}[language=bash]
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install --upgrade pip
+pip install .
+python -c "import roadrunner_nitro; print('ok')"
+\end{lstlisting}
+
+Activate the environment again (\code{source .venv/bin/activate}) in each new terminal. Fitting with pandas
+tables and plotting results need \code{pandas} and \code{matplotlib}, which are optional.
+
+\subsection{The C library}
+
+\begin{lstlisting}[language=bash]
+cargo build --release -p roadrunner_nitro_c_api
+\end{lstlisting}
+
+This makes one file in \code{target/release/}: \code{libroadrunner\_nitro\_c\_api.dylib} on macOS,
+\code{libroadrunner\_nitro\_c\_api.so} on Linux and \code{roadrunner\_nitro\_c\_api.dll} (with its import
+library \code{roadrunner\_nitro\_c\_api.dll.lib}) on Windows. The headers are in \code{capi/include/}.
+
+The library is tuned for the processor of the computer that built it. To use it on another computer, delete the
+\code{.cargo} folder first and build again; that makes a library that runs on any computer of the same type.

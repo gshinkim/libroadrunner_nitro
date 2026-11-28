@@ -13,12 +13,13 @@
  *    each on its own scale (lin, log or log10, from the parameter table).
  *  - The objective is the negative log-likelihood of the data (PEtab's convention, including the constant terms).
  *
- * Stage 1 covers: PEtab v1 core tables or a problem built here; normal and Laplace noise; lin/log/log10
- * observable transformations and parameter scales; condition overrides of parameters, initial values and
- * compartment sizes (sizes are fixed values, not estimated);
- * objective, exact gradient, residuals and residual Jacobian; trust-region reflective least squares with
- * Latin hypercube multistart; Fisher-information intervals. Later-stage features (placeholders,
- * pre-equilibration, priors, events) are refused with an error, never ignored.
+ * Covers: PEtab v1 tables or a problem built here; normal and Laplace noise; lin/log/log10 observable
+ * transformations and parameter scales; condition overrides of parameters, initial values and compartment sizes
+ * (sizes are fixed values, not estimated); observable and noise placeholders; pre-equilibration and steady-state
+ * measurements (time INFINITY); objective, exact gradient, residuals and residual Jacobian; trust-region
+ * reflective least squares or L-BFGS-B from Latin hypercube multistart, or a global method (particle swarm,
+ * differential evolution, SHADE) followed by local polishing; Fisher-information intervals. Features of later
+ * stages (priors, events) are refused with an error, never ignored.
  *
  * A problem is compiled on first use (any fitGet*, objective, run or interval call) and recompiled after it
  * changes. A handle may be used from one thread at a time; the library itself runs work on all cores (option

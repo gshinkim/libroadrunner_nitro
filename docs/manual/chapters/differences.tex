@@ -1,0 +1,31 @@
+\chapter{Differences from libroadrunner}
+\label{ch:differences}
+
+roadrunner\_nitro follows libroadrunner's behaviour, including its defaults, except where libroadrunner's
+behaviour is wrong. Over the 1075 curated BioModels, it simulates every model libroadrunner simulates, and 45
+that libroadrunner cannot. Time courses agree to a relative $10^{-5}$ on 959 models; where they differ, COPASI as
+an independent referee puts both engines within $10^{-3}$ of its answer in most cases, with roadrunner\_nitro
+the closer more often. The deliberate differences are:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{L{0.36\textwidth}YY}
+\toprule
+Function & libroadrunner & roadrunner\_nitro \\
+\midrule
+\code{getRatesOfChange} & values in a different order from \code{getRatesOfChangeIds} & values match the ids \\
+\code{setTimeCourseSelectionList} with \code{"time, cc(S1, k1)"} & splits inside \code{cc(...)} at the comma & splits only
+  between selections \\
+\code{loadSimulationSettings} & settings have no effect & start, duration, steps and tolerances are applied \\
+\code{getFloatingSpecies\-Initial\-Concentration\-ByIndex} & a bad index returns success without a value & a bad
+  index is an error \\
+\code{getConfigurationXML}, \code{writeRRData} & declared but missing & implemented \\
+\code{steadyState} & gives up when Newton's method fails from the current state & also finds steady states
+  Newton's method alone misses \\
+euler, rk4, rk45 integrators & ignore events after the start time & apply every event \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+In Python, the package is imported as \code{roadrunner\_nitro} rather than \code{roadrunner}, and it adds
+\code{simulateBatch} (many time courses in parallel) and the \code{fit} module, which libroadrunner does not
+have.

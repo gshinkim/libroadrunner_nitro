@@ -1,0 +1,142 @@
+\chapter{Simulation from Python}
+\label{ch:simulation}
+
+This chapter uses a small linear pathway throughout: a species \code{S1} made from a fixed source \code{X0},
+converted to \code{S2}, and \code{S2} removed.
+
+\section{Loading a model}
+
+A model is SBML text. Antimony, a short human-readable format, is converted to SBML by
+\code{antimony\_to\_sbml}:
+
+\begin{lstlisting}[language=Python]
+import roadrunner_nitro as rn
+
+sbml = rn.antimony_to_sbml('''
+    J1: $X0 -> S1; k1*X0     # S1 made from X0 ($: X0 is held fixed)
+    J2: S1 -> S2;  k2*S1
+    J3: S2 -> ;    k3*S2
+    X0 = 10; k1 = 0.5; k2 = 0.2; k3 = 0.4
+''')
+r = rn.RoadRunner(sbml)            # or rn.RoadRunner(open('model.xml').read())
+\end{lstlisting}
+
+Loading compiles the model to native code, which takes milliseconds even for large models. The lists of the
+model's elements are on \code{r.model}:
+
+\begin{lstlisting}[language=Python]
+r.model.getFloatingSpeciesIds()    # ['S1', 'S2']
+r.model.getReactionIds()           # ['J1', 'J2', 'J3']
+r.model.getGlobalParameterIds()    # ['k1', 'k2', 'k3']
+\end{lstlisting}
+
+\section{Time courses}
+
+\code{simulate(start, end, points)} integrates the model and returns a named array, one row per time point. The
+columns are the \emph{time-course selections}: by default time and the concentrations of the floating species.
+Any species, parameter, reaction rate or rule variable can be selected:
+
+\begin{lstlisting}[language=Python]
+r.timeCourseSelections = ['time', 'S1', 'S2', 'J2']
+result = r.simulate(0, 20, 5)
+print(result)
+\end{lstlisting}
+\begin{lstlisting}[style=out]
+    time,      S1,      S2,      J2
+ [[    0,       0,       0,       0],
+  [    5,  15.803, 4.99471,  3.1606],
+  [   10, 21.6166, 9.34557, 4.32332],
+  [   15, 23.7553, 11.2863, 4.75106],
+  [   20, 24.5421, 12.0463, 4.90842]]
+\end{lstlisting}
+
+The model is left at the end time: a second \code{simulate} continues from there unless you reset it.
+\code{simulate(times=[...])} reports exactly the times listed.
+
+\subsection{Reading and changing values}
+
+Values are read and set by id, as with a dictionary:
+
+\begin{lstlisting}[language=Python]
+r['S1']             # 24.542..., the current value
+r['k2'] = 0.3       # change a parameter
+r.reset()           # back to the initial state; parameter changes are kept
+r.resetAll()        # initial state and the model's own parameter values
+\end{lstlisting}
+
+\code{getValue(id)} and \code{setValue(id, value)} do the same. For a species, \code{'S1'} is the
+concentration and \code{'[S1]'} names it explicitly.
+
+\subsection{Many time courses at once}
+
+\code{simulateBatch} runs one time course per parameter set, in parallel on every core, and leaves the model
+unchanged. It returns an array of shape (sets, points, selections):
+
+\begin{lstlisting}[language=Python]
+out = r.simulateBatch({'k1': [0.25, 0.5, 1.0]}, 0, 20, 5, selections=['time', 'S2'])
+out.shape            # (3, 5, 2)
+out[:, -1, 1]        # S2 at time 20 for each k1: [ 6.48, 12.5, 24.55]
+\end{lstlisting}
+
+\subsection{Integrators}
+
+The default integrator (\code{'cvode'}) switches between a variable-order BDF method for stiff problems and a
+Rosenbrock method, and locates events and discontinuities exactly. \code{r.setIntegrator(name)} selects another:
+\code{'gillespie'} (stochastic simulation), \code{'rk4'}, \code{'rk45'} or \code{'euler'}. Settings use
+libroadrunner's names:
+
+\begin{lstlisting}[language=Python]
+r.integrator.relative_tolerance = 1e-10
+r.integrator.absolute_tolerance = 1e-14
+
+r.setIntegrator('gillespie')       # stochastic runs, reproducible with a seed
+r.setSeed(1)
+r.simulate(0, 20, 5)
+\end{lstlisting}
+
+\section{Steady states}
+
+\code{steadyState()} moves the model to its steady state. It uses Newton's method on the system reduced by its
+conservation laws, and if Newton's method fails from the current state it integrates towards the steady state
+and tries again, so it finds steady states that Newton's method alone misses.
+
+\begin{lstlisting}[language=Python]
+r.steadyState()
+r.getSteadyStateValues()        # [25. , 12.5]  (S1, S2)
+r.model.getReactionRates()      # [5., 5., 5.]
+\end{lstlisting}
+
+\section{Jacobians and control analysis}
+
+Matrices come back as named arrays, with \code{rownames} and \code{colnames}:
+
+\begin{lstlisting}[language=Python]
+J = r.getFullJacobian()
+print(J)
+\end{lstlisting}
+\begin{lstlisting}[style=out]
+        S1,   S2
+S1 [[ -0.2,    0],
+S2  [  0.2, -0.4]]
+\end{lstlisting}
+
+Control coefficients and elasticities are computed at the steady state, with exact derivatives:
+
+\begin{lstlisting}[language=Python]
+r.getCC('J3', 'k1')     # 1.0: scaled flux control coefficient of k1 on J3
+r.getuCC('S2', 'k2')    # 0.0: S2 = k1 X0 / k3 does not depend on k2
+r.getEE('J2', 'S1')     # 1.0: scaled elasticity of J2 with respect to S1
+r.getScaledFluxControlCoefficientMatrix()
+\end{lstlisting}
+
+Other matrices follow libroadrunner's names, for example:
+
+\begin{lstlisting}[language=Python]
+r.getFullStoichiometryMatrix()
+r.getLinkMatrix()
+r.getConservationMatrix()
+r.getReducedJacobian()
+r.getFullEigenValues()
+r.getScaledElasticityMatrix()
+r.getScaledConcentrationControlCoefficientMatrix()
+\end{lstlisting}

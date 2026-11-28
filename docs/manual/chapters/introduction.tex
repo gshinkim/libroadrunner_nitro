@@ -1,0 +1,55 @@
+\chapter{Introduction}
+
+roadrunner\_nitro is an engine for simulating biochemical models written in SBML, the Systems Biology Markup
+Language. It does the same job as libroadrunner, gives the same answers, and is written in Rust. It needs neither
+libroadrunner nor libsbml: it reads SBML itself and compiles each model to native code when it loads.
+
+\section{What it does}
+
+\begin{itemize}
+  \item \textbf{Time courses}: deterministic simulation with stiff and non-stiff solvers, events, delays,
+        assignment and rate rules; stochastic simulation with Gillespie's method.
+  \item \textbf{Steady states}: Newton's method on the system reduced by its conservation laws, with integration
+        towards the steady state when Newton's method alone fails.
+  \item \textbf{Metabolic control analysis}: Jacobians, elasticities, flux and concentration control
+        coefficients.
+  \item \textbf{Parameter estimation}: fitting models to data with exact gradients, local and global optimizers,
+        and confidence intervals; problems can be built in Python or C, or read from PEtab files.
+\end{itemize}
+
+\section{Two ways to use it}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{L{0.33\textwidth}Y}
+\toprule
+If you write \ldots & Use \\
+\midrule
+Python & the Python package \code{roadrunner\_nitro} (chapters~\ref{ch:simulation} and~\ref{ch:fitting}) \\
+\addlinespace
+C, C++, MATLAB, Julia, C\#, R, or anything that can load a C library &
+  the C library \code{libroadrunner\_nitro\_c\_api}, which has all 350 functions of libroadrunner's C API
+  (chapter~\ref{ch:capi}) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The Python methods have libroadrunner's names (\code{simulate}, \code{steadyState}, \code{getCC},
+\code{setValue}, \ldots), and the C library has libroadrunner's C functions with the same names, arguments and
+memory rules. Programs written for libroadrunner therefore run on roadrunner\_nitro with few or no changes;
+chapter~\ref{ch:differences} lists the places where it deliberately behaves differently.
+
+roadrunner\_nitro is the engine inside Tellurium Nitro. If you want the whole Tellurium environment in Python
+(\code{te.loada}, plotting, SED-ML, COMBINE archives), install Tellurium Nitro, which includes this engine.
+
+The package has its own name, \code{roadrunner\_nitro}, so an existing libroadrunner installation is not
+touched and both can be used side by side.
+
+\section{About this manual}
+
+Chapter~\ref{ch:installation} installs the Python package and the C library. Chapter~\ref{ch:simulation} covers
+simulation, steady states and control analysis from Python. Chapter~\ref{ch:fitting} covers parameter
+estimation, from a three-line fit of one time course to PEtab problems with many experiments.
+Chapter~\ref{ch:capi} shows the C library, and chapter~\ref{ch:differences} the differences from libroadrunner.
+
+Outputs shown in this manual were produced by the code beside them. Complete programs are in the repository's
+\code{examples/python} and \code{capi/examples} folders.
