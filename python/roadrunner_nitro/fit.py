@@ -233,16 +233,26 @@ class Problem:
 
     # ------------------------------------------------------------ fitting and uncertainty
 
-    def fit(self, n_starts=10, seed=0, threads=0, x0=None, ftol=1e-8, xtol=1e-8, gtol=1e-8, max_nfev=0, callback=None):
-        """Multistart trust-region reflective least squares from Latin hypercube starts within the bounds.
+    def fit(self, n_starts=10, seed=0, threads=0, x0=None, ftol=1e-8, xtol=1e-8, gtol=1e-8, max_nfev=0, callback=None,
+            global_method=None, population=0, max_evals=0, polish=True):
+        """Multistart local fitting from Latin hypercube starts within the bounds (trust-region least squares, or
+        L-BFGS-B for problems that are not least squares).
 
-        x0: a first start (theta); threads: 0 for all cores; max_nfev: evaluations per start (0: 100 x free
-        parameters). callback(finished, total, best) runs after each start; returning True cancels (running
-        starts stop after their current iteration and keep their best point). The same seed gives the same
-        result, to the last bit, whatever the number of threads.
+        global_method: 'pso' (particle swarm, SPSO-2011), 'de' (differential evolution, DE/rand/1/bin) or 'shade'
+        (adaptive differential evolution) searches the whole box first, then its n_starts best distinct points
+        are polished by the local method (polish=False: returned as the search left them). population: members
+        (0: the method's default); max_evals: objective evaluations of the search (0: 1000 per parameter, at
+        least 10 000).
+
+        x0: a first start (theta); threads: 0 for all cores; max_nfev: evaluations per local start (0: 100 x free
+        parameters). callback(finished, total, best) runs after each start, and during a search after each
+        generation (evaluations, budget, best); returning True cancels (running starts stop after their current
+        iteration and keep their best point). The same seed gives the same result, to the last bit, whatever the
+        number of threads.
         """
         x0 = None if x0 is None else [float(v) for v in np.asarray(x0, dtype=float).ravel()]
-        d = self._p.fit(int(n_starts), int(seed), int(threads), x0, ftol, xtol, gtol, int(max_nfev), callback)
+        d = self._p.fit(int(n_starts), int(seed), int(threads), x0, ftol, xtol, gtol, int(max_nfev), callback,
+                        global_method, int(population), int(max_evals), bool(polish))
         return FitResult(problem=self, **d)
 
     def fisher(self, theta, level=0.95):
@@ -257,7 +267,8 @@ class FitResult:
 
     x, x0: [starts, free parameters] final and starting points on the parameter scales; value: objective per
     start (inf: the start failed); status / message / converged per start; nfev, njev, nit: residual and
-    Jacobian evaluations and iterations; start: each row's index in the original sample.
+    Jacobian evaluations and iterations; start: each row's index in the original sample. global_stage: with a
+    global method, a dict of method, best (its best objective), nfev, generations and message.
     """
     problem: Problem
     ids: list
@@ -271,6 +282,7 @@ class FitResult:
     nfev: list
     njev: list
     nit: list
+    global_stage: dict = None
 
     @property
     def best(self):

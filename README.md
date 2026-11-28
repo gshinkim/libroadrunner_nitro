@@ -150,6 +150,8 @@ p.add_measurements('half', 'S1_obs', times, values_half)
 
 r = p.fit(n_starts=20)                         # fits from 20 starting points, on all cores
 print(r)                                       # best parameters, and how many starts found them
+r = p.fit(global_method='shade')               # or search the whole range first ('pso', 'de', 'shade'),
+                                               # then refine its best points
 print(p.fisher(r.best))                        # 95% confidence intervals
 ```
 

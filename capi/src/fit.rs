@@ -4,7 +4,7 @@ use crate::api::{inst, run, st};
 use crate::types::*;
 use libc::{c_char, c_int, c_void};
 use roadrunner_nitro::fit::trf::Status;
-use roadrunner_nitro::fit::{fisher, fit, petab, FitOptions, FitResult, Measurement, Noise, ObservableDef, ParamDef, Problem, ProblemDef, Scale, Value};
+use roadrunner_nitro::fit::{fisher, fit, petab, FitOptions, FitResult, Global, Measurement, Noise, ObservableDef, ParamDef, Problem, ProblemDef, Scale, Value};
 use std::ptr::null_mut;
 
 type R<T> = Result<T, String>;
@@ -284,8 +284,23 @@ pub unsafe extern "C" fn fitSetOption(o: FitOptionsHandle, name: *const c_char, 
             "xtol" => o.trf.xtol = tol()?,
             "gtol" => o.trf.gtol = tol()?,
             "max_nfev" => o.trf.max_nfev = count("max_nfev")?,
-            _ => return Err(format!("unknown option '{name}' (n_starts, seed, threads, ftol, xtol, gtol, max_nfev)")),
+            "population" => o.global_opts.population = count("population")?,
+            "max_evals" => o.global_opts.max_evals = count("max_evals")?,
+            "polish" => o.polish = value != 0.0,
+            _ => return Err(format!("unknown option '{name}' (n_starts, seed, threads, ftol, xtol, gtol, max_nfev, population, max_evals, polish)")),
         }
+        Ok(true)
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn fitSetGlobalMethod(o: FitOptionsHandle, method: *const c_char) -> bool {
+    run(false, || {
+        let o = opts(o)?;
+        o.global = if method.is_null() { None } else {
+            let m = st(method)?;
+            if m.is_empty() || m.eq_ignore_ascii_case("none") { None } else { Some(Global::parse(&m)?) }
+        };
         Ok(true)
     })
 }
@@ -523,6 +538,21 @@ mod tests {
             let (fr, fc, fi) = mat_of(fitFisherIntervals(p, x.as_ptr(), 4, 0.95));
             assert_eq!((fr, fc), (4, 5));
             for k in 0..4 { assert!(fi[k * 5 + 2] < x[k] && x[k] < fi[k * 5 + 3] && fi[k * 5 + 4] == 1.0); }
+
+            // a global method, then polishing
+            let og = fitCreateOptions();
+            assert!(fitSetGlobalMethod(og, c("shade").as_ptr()), "{}", err());
+            assert!(!fitSetGlobalMethod(og, c("bogus").as_ptr()));
+            assert!(fitSetOption(og, c("max_evals").as_ptr(), 1500.0) && fitSetOption(og, c("n_starts").as_ptr(), 2.0));
+            let mut gcalls: c_int = 0;
+            let rg = fitRun(p, og, Some(cb), &mut gcalls as *mut c_int as *mut c_void);
+            assert!(!rg.is_null(), "{}", err());
+            assert!(gcalls > 2);
+            let mut gbest = 0.0;
+            let xg = vec_of(fitGetBest(rg, &mut gbest));
+            for k in 0..4 { assert!((xg[k] - truth[k]).abs() < 1e-4 * truth[k].abs().max(1.0), "{xg:?}"); }
+            fitFreeResult(rg);
+            fitFreeOptions(og);
             assert!(fitFreeResult(r));
 
             // cancel after the first start

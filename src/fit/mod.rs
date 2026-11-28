@@ -3,7 +3,9 @@
 //! - `problem`: problem definition (the native API; PEtab import produces the same `ProblemDef`), compiled once;
 //!   negative log-likelihood, gradient, residuals and residual Jacobian with exact forward sensitivities.
 //! - `trf`: trust-region reflective least squares with bounds.
-//! - `optimize`: Latin hypercube multistart and Fisher-information intervals.
+//! - `optimize`: Latin hypercube multistart, global then local, and Fisher-information intervals.
+//! - `global`: particle swarm (SPSO-2011), differential evolution (DE/rand/1/bin) and SHADE.
+pub mod global;
 pub mod lbfgsb;
 pub mod optimize;
 pub mod petab;
@@ -12,7 +14,8 @@ pub mod problem;
 pub mod py;
 pub mod trf;
 
-pub use optimize::{fisher, fit, FitOptions, FitResult, Fisher, Method, StartResult};
+pub use global::{Global, GlobalOptions, GlobalResult};
+pub use optimize::{fisher, fit, FitOptions, FitResult, Fisher, GlobalSummary, Method, StartResult};
 pub use problem::{Eval, Measurement, Noise, ObservableDef, ParamDef, Problem, ProblemDef, Scale, Value};
 
 #[cfg(test)]
@@ -195,6 +198,29 @@ mod tests {
         let fi = fisher(&p, &b.x, 0.95).unwrap();
         assert!(fi.identifiable.iter().all(|&x| x));
         for k in 0..4 { assert!(fi.sd[k] > 0.0 && fi.sd[k] < 0.1 * truth[k].abs().max(1.0), "{:?}", fi.sd); }
+    }
+
+    #[test]
+    fn global_then_local() {
+        // each global method, then its 3 best distinct members polished: the multistart optimum, the same on 1 and
+        // 4 threads; without polishing the members come back as the global method left them
+        let p = Problem::new(decay_problem(0.0)).unwrap();
+        let truth = [0.4f64.log10(), 0.25f64.log10(), 3f64.ln(), 20.0];
+        for g in [Global::Pso, Global::De, Global::Shade] {
+            let o = FitOptions { n_starts: 3, seed: 5, global: Some(g), global_opts: GlobalOptions { max_evals: 2000, ..Default::default() }, ..Default::default() };
+            let r = fit(&p, &o, None).unwrap();
+            let gs = r.global.as_ref().unwrap();
+            assert!(gs.nfev >= 2000 || gs.status == trf::Status::Ftol, "{}: {gs:?}", g.name());
+            assert!(r.starts.len() == 3 && r.best().nllh <= gs.best, "{}", g.name());
+            for k in 0..4 { assert!((r.best().x[k] - truth[k]).abs() < 1e-4 * truth[k].abs().max(1.0), "{}: {:?}", g.name(), r.best().x); }
+            let r4 = fit(&p, &FitOptions { threads: 4, ..o.clone() }, None).unwrap();
+            let r1 = fit(&p, &FitOptions { threads: 1, ..o.clone() }, None).unwrap();
+            assert_eq!(r1.best().x, r4.best().x);
+            assert_eq!(r1.best().nllh.to_bits(), r4.best().nllh.to_bits());
+            let raw = fit(&p, &FitOptions { polish: false, ..o.clone() }, None).unwrap();
+            assert_eq!(raw.best().nllh, gs.best);
+            assert!(raw.starts.iter().all(|s| s.nit == 0 && s.x == s.x0));
+        }
     }
 
     #[test]

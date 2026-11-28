@@ -1,5 +1,6 @@
 //! Python binding of the fitting core: `roadrunner_nitro.core.FitProblem`. The public, documented layer is
 //! python/roadrunner_nitro/fit.py; this class takes and returns plain values and numpy arrays.
+use super::global::{Global, GlobalOptions};
 use super::optimize::{fisher, fit, FitOptions};
 use super::problem::{Measurement, Noise, ObservableDef, ParamDef, Problem, ProblemDef, Scale, Value};
 use super::trf::Status;
@@ -186,15 +187,20 @@ impl PyFitProblem {
         arr(py, y, &[m])
     }
 
-    /// Multistart least squares. callback(finished, total, best) is called after each start (from a worker
-    /// thread, holding the GIL); a true return value cancels. Returns a dict of per-start results, best first.
-    #[pyo3(signature = (n_starts=10, seed=0, threads=0, x0=None, ftol=1e-8, xtol=1e-8, gtol=1e-8, max_nfev=0, callback=None))]
+    /// Multistart least squares, or a global method then local polishing. callback(finished, total, best) is
+    /// called after each start, and during a global stage after each generation (evaluations, budget, best), from
+    /// a worker thread holding the GIL; a true return value cancels. Returns a dict of per-start results, best first.
+    #[pyo3(signature = (n_starts=10, seed=0, threads=0, x0=None, ftol=1e-8, xtol=1e-8, gtol=1e-8, max_nfev=0, callback=None,
+                        global_method=None, population=0, max_evals=0, polish=true))]
     #[allow(clippy::too_many_arguments)]
     fn fit<'py>(&mut self, py: Python<'py>, n_starts: usize, seed: u64, threads: usize, x0: Option<Vec<f64>>, ftol: f64, xtol: f64,
-                gtol: f64, max_nfev: usize, callback: Option<Py<PyAny>>) -> PyResult<Bound<'py, PyDict>> {
+                gtol: f64, max_nfev: usize, callback: Option<Py<PyAny>>, global_method: Option<String>, population: usize,
+                max_evals: usize, polish: bool) -> PyResult<Bound<'py, PyDict>> {
         if n_starts == 0 { return Err(verr("n_starts must be >= 1".into())); }
+        let global = global_method.as_deref().map(Global::parse).transpose().map_err(verr)?;
         let p = self.get()?;
-        let mut o = FitOptions { n_starts, seed, threads, x0, ..Default::default() };
+        let mut o = FitOptions { n_starts, seed, threads, x0, global, polish,
+                                 global_opts: GlobalOptions { population, max_evals, ..Default::default() }, ..Default::default() };
         (o.trf.ftol, o.trf.xtol, o.trf.gtol, o.trf.max_nfev) = (ftol, xtol, gtol, max_nfev);
         let cb_err: Mutex<Option<PyErr>> = Mutex::new(None);
         let progress = |done: usize, total: usize, best: f64| -> bool {
@@ -220,6 +226,15 @@ impl PyFitProblem {
         d.set_item("nfev", r.starts.iter().map(|s| s.nfev).collect::<Vec<_>>())?;
         d.set_item("njev", r.starts.iter().map(|s| s.njev).collect::<Vec<_>>())?;
         d.set_item("nit", r.starts.iter().map(|s| s.nit).collect::<Vec<_>>())?;
+        if let Some(g) = &r.global {
+            let gd = PyDict::new(py);
+            gd.set_item("method", g.method.name())?;
+            gd.set_item("best", g.best)?;
+            gd.set_item("nfev", g.nfev)?;
+            gd.set_item("generations", g.ngen)?;
+            gd.set_item("message", g.status.message())?;
+            d.set_item("global_stage", gd)?;
+        }
         Ok(d)
     }
 

@@ -133,8 +133,15 @@ C_DECL_SPEC RRVectorPtr rrcCallConv fitSimulateMeasurements(FitProblemHandle p, 
  *  max_nfev 0 (100 x free parameters per start). */
 C_DECL_SPEC FitOptionsHandle rrcCallConv fitCreateOptions(void);
 
-/** Set an option by name: "n_starts", "seed", "threads", "ftol", "xtol", "gtol", "max_nfev". */
+/** Set an option by name: "n_starts", "seed", "threads", "ftol", "xtol", "gtol", "max_nfev"; for a global method
+ *  also "population" (0: the method's default), "max_evals" (objective evaluations of the search; 0: 1000 per
+ *  parameter, at least 10 000) and "polish" (0: return the search's best points unpolished; default 1). */
 C_DECL_SPEC bool rrcCallConv fitSetOption(FitOptionsHandle o, const char* name, double value);
+
+/** Search the whole box first with a global method: "pso" (particle swarm, SPSO-2011), "de" (differential
+ *  evolution, DE/rand/1/bin) or "shade" (adaptive differential evolution); its n_starts best distinct points are
+ *  then polished by the local method. NULL or "none": multistart only (the default). */
+C_DECL_SPEC bool rrcCallConv fitSetGlobalMethod(FitOptionsHandle o, const char* method);
 
 /** Use theta (n values) as the first start; the other starts stay Latin hypercube samples. n = 0 clears it. */
 C_DECL_SPEC bool rrcCallConv fitSetStartPoint(FitOptionsHandle o, const double* theta, int n);

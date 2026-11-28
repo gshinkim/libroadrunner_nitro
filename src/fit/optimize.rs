@@ -1,4 +1,5 @@
-//! Multistart local fitting and Fisher-information intervals (spec: "Optimizers", stage 1).
+//! Multistart local fitting, global then local, and Fisher-information intervals (spec: "Optimizers").
+use super::global::{minimize, Cost, Global, GlobalOptions};
 use super::problem::Problem;
 use super::lbfgsb::{lbfgsb, LbfgsbOptions, LbfgsbStatus, Objective};
 use super::trf::{trf, Residuals, Status, TrfOptions};
@@ -18,11 +19,17 @@ pub struct FitOptions {
     pub x0: Option<Vec<f64>>,
     /// worker threads (0: all cores)
     pub threads: usize,
+    /// a global method run first; its best distinct members (n_starts of them) are the local starts
+    pub global: Option<Global>,
+    pub global_opts: GlobalOptions,
+    /// with a global method: polish its best members with the local method (false: report them as they are)
+    pub polish: bool,
 }
 
 impl Default for FitOptions {
     fn default() -> Self {
-        FitOptions { n_starts: 10, seed: 0, method: Method::Auto, trf: TrfOptions::default(), lbfgsb: LbfgsbOptions::default(), x0: None, threads: 0 }
+        FitOptions { n_starts: 10, seed: 0, method: Method::Auto, trf: TrfOptions::default(), lbfgsb: LbfgsbOptions::default(), x0: None, threads: 0,
+                     global: None, global_opts: GlobalOptions::default(), polish: true }
     }
 }
 
@@ -75,6 +82,39 @@ pub struct FitResult {
     /// every start, best (lowest nllh) first; ties keep start order
     pub starts: Vec<StartResult>,
     pub ids: Vec<String>,
+    /// the global stage, if one ran
+    pub global: Option<GlobalSummary>,
+}
+
+/// The global stage of a fit: its best value, objective evaluations, generations and why it stopped.
+#[derive(Clone, Debug)]
+pub struct GlobalSummary { pub method: Global, pub best: f64, pub nfev: usize, pub ngen: usize, pub status: Status }
+
+struct NllhOnly<'a> { p: &'a Problem, stop: &'a AtomicBool, progress: Option<Progress<'a>>, budget: usize }
+
+impl Cost for NllhOnly<'_> {
+    fn f(&self, x: &[f64]) -> Option<f64> { self.p.evaluate(x, false, false).ok().map(|e| e.nllh) }
+    fn cancel(&self, nfev: usize, best: f64) -> bool {
+        // the generation that reaches the budget completes: report at most the budget
+        if let Some(cb) = self.progress { if cb(nfev.min(self.budget), self.budget, best) { self.stop.store(true, Ordering::Relaxed); } }
+        self.stop.load(Ordering::Relaxed)
+    }
+}
+
+/// Up to n members, best first, each at least `sep` (a fraction of the box, in one coordinate) from those taken.
+fn distinct(members: &[(Vec<f64>, f64)], lb: &[f64], ub: &[f64], n: usize, sep: f64) -> Vec<(Vec<f64>, f64)> {
+    let mut out: Vec<(Vec<f64>, f64)> = vec![];
+    for (x, f) in members {
+        if out.len() == n { break; }
+        if !f.is_finite() { continue; }
+        let far = out.iter().all(|(y, _)| (0..x.len()).any(|k| (x[k] - y[k]).abs() > sep * (ub[k] - lb[k])));
+        if far { out.push((x.clone(), *f)); }
+    }
+    out
+}
+
+fn in_pool<T: Send>(threads: usize, f: impl FnOnce() -> T + Send) -> Result<T, String> {
+    if threads == 0 { Ok(f()) } else { Ok(rayon::ThreadPoolBuilder::new().num_threads(threads).build().map_err(|e| e.to_string())?.install(f)) }
 }
 
 impl FitResult {
@@ -125,13 +165,35 @@ pub fn fit(p: &Problem, o: &FitOptions, progress: Option<Progress>) -> Result<Fi
     if n == 0 { return Err("no parameter to estimate".into()); }
     let (lb, ub) = p.bounds();
     if lb.iter().chain(&ub).any(|v| !v.is_finite()) { return Err("multistart needs finite bounds for every estimated parameter".into()); }
-    let ns = o.n_starts.max(1);
-    let mut starts = latin_hypercube(ns, &lb, &ub, o.seed);
     if let Some(x0) = &o.x0 {
         if x0.len() != n { return Err(format!("x0 has {} values, the problem {n} free parameters", x0.len())); }
-        starts[0] = x0.clone();
     }
     let stop = AtomicBool::new(false);
+    // global stage: its best distinct members are the local starts
+    let mut global = None;
+    let starts = match o.global {
+        None => {
+            let mut s = latin_hypercube(o.n_starts.max(1), &lb, &ub, o.seed);
+            if let Some(x0) = &o.x0 { s[0] = x0.clone(); }
+            s
+        }
+        Some(g) => {
+            let budget = if o.global_opts.max_evals == 0 { (1000 * n).max(10_000) } else { o.global_opts.max_evals };
+            let cost = NllhOnly { p, stop: &stop, progress, budget };
+            let init: Vec<Vec<f64>> = o.x0.iter().cloned().collect();
+            let gr = in_pool(o.threads, || minimize(&cost, g, &lb, &ub, &init, o.seed, &o.global_opts))??;
+            global = Some(GlobalSummary { method: g, best: gr.f, nfev: gr.nfev, ngen: gr.ngen, status: gr.status });
+            let s = distinct(&gr.members, &lb, &ub, o.n_starts.max(1), 1e-3);
+            if s.is_empty() { return Err(format!("{}: no point of the search could be evaluated", g.name())); }
+            if !o.polish || stop.load(Ordering::Relaxed) {
+                let starts = s.into_iter().enumerate().map(|(i, (x, nllh))|
+                    StartResult { start: i, x0: x.clone(), x, nllh, nfev: 0, njev: 0, nit: 0, status: gr.status }).collect();
+                return Ok(FitResult { starts, ids: p.free_ids(), global });
+            }
+            s.into_iter().map(|m| m.0).collect()
+        }
+    };
+    let ns = starts.len();
     let done = std::sync::Mutex::new((0usize, f64::INFINITY));
     let run = || -> Vec<StartResult> {
         starts.par_iter().enumerate().map(|(i, x0)| {
@@ -161,11 +223,9 @@ pub fn fit(p: &Problem, o: &FitOptions, progress: Option<Progress>) -> Result<Fi
             s
         }).collect()
     };
-    let mut res = if o.threads == 0 { run() } else {
-        rayon::ThreadPoolBuilder::new().num_threads(o.threads).build().map_err(|e| e.to_string())?.install(run)
-    };
+    let mut res = in_pool(o.threads, run)?;
     res.sort_by(|a, b| a.nllh.total_cmp(&b.nllh).then(a.start.cmp(&b.start)));
-    Ok(FitResult { starts: res, ids: p.free_ids() })
+    Ok(FitResult { starts: res, ids: p.free_ids(), global })
 }
 
 /// Fisher-information (Wald) intervals at theta: from the Gauss-Newton Hessian J^T J of the residuals.

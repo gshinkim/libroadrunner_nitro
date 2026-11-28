@@ -113,6 +113,21 @@ def test_preequilibration_and_steady_state():
     assert list(p.measurement_table()['preequilibrationConditionId']) == ['half'] * 4
 
 
+@pytest.mark.parametrize('method', ['pso', 'de', 'shade'])
+def test_global_then_local(method):
+    p = problem()
+    r = p.fit(n_starts=2, seed=1, global_method=method, max_evals=1500)
+    np.testing.assert_allclose(r.best, TRUTH, atol=1e-5)
+    g = r.global_stage
+    assert g['method'] == method and g['nfev'] >= 1 and r.best_value <= g['best']
+    r1 = p.fit(n_starts=2, seed=1, global_method=method, max_evals=1500, threads=1)
+    assert r1.best_value == r.best_value and (r1.best == r.best).all()
+    raw = p.fit(n_starts=2, seed=1, global_method=method, max_evals=1500, polish=False)
+    assert raw.best_value == g['best'] and all(n == 0 for n in raw.nit)
+    with pytest.raises(ValueError):
+        p.fit(global_method='nope')
+
+
 def test_multistart_recovers_and_is_deterministic():
     p = problem()
     calls = []
