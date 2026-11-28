@@ -1,0 +1,31 @@
+Alkan_SciSignal2018                  best      68.650623 nominal      68.650645  multistart 2/2 1164.2s  pso 0/2  327.4s  de 0/2  428.7s  shade 0/2  284.7s
+Armistead_CellDeathDis2024           best    -301.916184 nominal    -301.916182  multistart 2/2    2.7s  pso 1/2    1.2s  de 2/2    0.9s  shade 2/2    1.0s
+Beer_MolBioSystems2014               best  -11676.166381 nominal  -58622.913639  multistart 1/2  192.2s  pso 0/2   11.8s  de 0/2  181.8s  shade 0/2  402.3s
+Bertozzi_PNAS2020                    best     158.864268 nominal     158.864268  multistart 2/2    0.1s  pso 2/2    0.1s  de 2/2    0.1s  shade 2/2    0.1s
+Blasi_CellSystems2016                best   -1090.561825 nominal    -642.826897  multistart 1/2    0.0s  pso 1/2    0.1s  de 1/2    0.0s  shade 1/2    0.1s
+Boehm_JProteomeRes2014               best     138.221977 nominal     138.221999  multistart 1/2    0.8s  pso 0/2    0.5s  de 1/2    0.6s  shade 1/2    0.6s
+Borghans_BiophysChem1997             best     -60.780946 nominal     -83.323686  multistart 1/2    4.2s  pso 0/2    2.5s  de 0/2    1.7s  shade 0/2    2.7s
+Brannmark_JBC2010                    best     143.214414 nominal     141.889204  multistart 0/2   29.0s  pso 1/2   21.9s  de 0/2   13.2s  shade 0/2   28.3s
+Bruno_JExpBot2016                    best     -46.688183 nominal     -46.688183  multistart 2/2    0.8s  pso 2/2    0.6s  de 2/2    0.7s  shade 2/2    0.5s
+Crauste_CellSystems2017              best     276.384026 nominal     190.964500  multistart 1/2   12.6s  pso 0/2    1.7s  de 0/2    2.1s  shade 0/2    1.9s
+Elowitz_Nature2000                   best     -27.465471 nominal     -63.202751  multistart 1/2    7.7s  pso 0/2  147.6s  de 0/2   63.9s  shade 0/2   84.4s
+Fiedler_BMCSystBiol2016              best     -57.488102 nominal     -58.583873  multistart 0/2    5.8s  pso 0/2    2.9s  de 0/2    2.9s  shade 1/2    7.0s
+Fujita_SciSignal2010                 best     -66.561273 nominal     -53.083779  multistart 0/2  117.2s  pso 0/2  110.3s  de 1/2   85.4s  shade 0/2  313.9s
+Giordano_Nature2020                  best   -3464.953425 nominal     287.627761  multistart 0/2   53.3s  pso 0/2   18.3s  de 0/2   25.2s  shade 1/2   21.2s
+Laske_PLOSComputBiol2019             best            inf nominal            nan  multistart 0/0    0.0s  pso 0/0    0.0s  de 0/0    0.0s  shade 0/0    0.0s
+Lucarelli_CellSystems2018            best            inf nominal            nan  multistart 0/0    0.0s  pso 0/0    0.0s  de 0/0    0.0s  shade 0/0    0.0s
+Okuonghae_ChaosSolitonsFractals2020  best     375.715116 nominal  470490.583954  multistart 0/2  107.9s  pso 0/2    5.4s  de 1/2   26.9s  shade 0/2   16.6s
+Oliveira_NatCommun2021               best    7904.946002 nominal 9623398.690631  multistart 1/2    6.9s  pso 0/2    3.9s  de 0/2    3.5s  shade 0/2    3.7s
+Perelson_Science1996                 best     222.280769 nominal     432.038550  multistart 2/2    0.3s  pso 1/2    0.1s  de 0/2    0.0s  shade 1/2    0.1s
+Rahman_MBS2016                       best      21.153486 nominal      21.153490  multistart 2/2    3.6s  pso 2/2    1.8s  de 2/2    1.4s  shade 2/2    2.1s
+Raia_CancerResearch2011              best     350.813579 nominal     346.089782  multistart 1/2  155.2s  pso 0/2   44.5s  de 0/2   56.4s  shade 0/2   47.0s
+SalazarCavazos_MBoC2020              best     366.861604 nominal     367.187609  multistart 2/2   80.1s  pso 2/2   47.4s  de 2/2   30.2s  shade 2/2   45.0s
+Sneyd_PNAS2002                       best    -319.792327 nominal    -319.791777  multistart 0/2   11.0s  pso 1/2   11.2s  de 0/2    6.6s  shade 2/2    9.6s
+Weber_BMC2015                        best     318.549222 nominal     296.201799  multistart 0/2   21.2s  pso 0/2   14.4s  de 0/2   21.7s  shade 1/2   18.3s
+Zhao_QuantBiol2020                   best     560.090142 nominal     777.344256  multistart 1/2   21.9s  pso 0/2    2.4s  de 0/2    4.4s  shade 0/2   13.7s
+Zheng_PNAS2012                       best    -289.931173 nominal    -278.333532  multistart 0/2   32.9s  pso 1/2   18.6s  de 0/2   18.0s  shade 0/2   18.0s
+
+multistart reaches best 23/48, reaches nominal 27/48, total 4063 s
+pso        reaches best 14/48, reaches nominal 23/48, total 1593 s
+de         reaches best 14/48, reaches nominal 24/48, total 1953 s
+shade      reaches best 18/48, reaches nominal 26/48, total 2646 s
